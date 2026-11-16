@@ -1,5 +1,6 @@
 #include <systemc.h>
 #include "memoria_instrucciones.h"
+#include <vector>
 
 int sc_main(int argc, char* argv[])
 {
@@ -9,6 +10,13 @@ int sc_main(int argc, char* argv[])
 
     // Instanciamos la memoria
     MemoriaInstrucciones memoria("memoria");
+
+    // Cargamos un programa de prueba ANTES de iniciar la simulación
+    std::vector<sc_uint<16>> programa(256, 0);
+    programa[0] = 0x1111;
+    programa[5] = 0x1234;
+    programa[6] = 0x5678;
+    memoria.cargar_programa(programa);
 
     // Conectamos los puertos
     memoria.direccion(direccion);

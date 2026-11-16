@@ -3,6 +3,7 @@
 #define MEMORIA_INSTRUCCIONES_H
 
 #include <systemc.h>
+#include <vector>
 
 SC_MODULE(MemoriaInstrucciones)
 {
@@ -21,16 +22,27 @@ SC_MODULE(MemoriaInstrucciones)
         instruccion.write(memoria[direccion.read()]);
     }
 
+    // Carga un programa completo en la memoria. Se debe llamar
+    // antes de iniciar la simulacion (sc_start). No depende de
+    // instrucciones fijas escritas en el constructor.
+    void cargar_programa(const std::vector<sc_uint<16>>& programa)
+    {
+        for (unsigned int i = 0; i < 256; i++)
+        {
+            if (i < programa.size())
+                memoria[i] = programa[i];
+            else
+                memoria[i] = 0;
+        }
+    }
+
     SC_CTOR(MemoriaInstrucciones)
     {
-        // Inicializamos toda la memoria
+        // Inicializamos toda la memoria en cero (sin programa fijo)
         for (int i = 0; i < 256; i++)
         {
             memoria[i] = 0;
         }
-
-        // Instrucción de prueba
-        memoria[5] = 0x1234;
 
         // Configuramos la lectura
         SC_METHOD(leer);

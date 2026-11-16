@@ -9,6 +9,7 @@ int sc_main(int argc, char* argv[])
     // ==========================================
 
     sc_signal<bool> clk;
+    sc_signal<bool> reset;
     sc_signal<bool> write_enable;
 
     sc_signal<sc_uint<3>> read_register_1;
@@ -28,6 +29,7 @@ int sc_main(int argc, char* argv[])
 
     // Conectamos las entradas
     banco.clk(clk);
+    banco.reset(reset);
     banco.write_enable(write_enable);
 
     banco.read_register_1(read_register_1);
@@ -45,6 +47,7 @@ int sc_main(int argc, char* argv[])
     // ==========================================
 
     clk.write(false);
+    reset.write(true);
     write_enable.write(false);
 
     read_register_1.write(0);
@@ -53,7 +56,12 @@ int sc_main(int argc, char* argv[])
     write_register.write(0);
     write_data.write(0);
 
-    //Dejamos que SystemC procese las señales
+    // Aplicamos reset en un flanco positivo para limpiar registros
+    sc_start(1, SC_NS);
+    clk.write(true);
+    sc_start(1, SC_NS);
+    clk.write(false);
+    reset.write(false);
     sc_start(1, SC_NS);
 
     // ==========================================

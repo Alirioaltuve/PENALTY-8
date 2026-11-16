@@ -1,4 +1,7 @@
 
+#ifndef BANCO_REGISTROS_H
+#define BANCO_REGISTROS_H
+
 #include <systemc.h>
 
 SC_MODULE(BancoRegistros)
@@ -11,6 +14,10 @@ SC_MODULE(BancoRegistros)
 
     // Reloj del sistema
     sc_in<bool> clk;
+
+    // Reset sincrono, activo en alto. Limpia todos los registros
+    // en el flanco positivo para cumplir la arquitectura acordada.
+    sc_in<bool> reset;
 
 
     // Control de escritura
@@ -68,7 +75,17 @@ SC_MODULE(BancoRegistros)
     // ==========================================
     void escribir_registro()
     {
-        // Comprobamos si la lectura esta habilitada
+        // El reset tiene la maxima prioridad: limpia los registros
+        if (reset.read() == true)
+        {
+            for (int i = 0; i < 8; i++)
+            {
+                registros[i].write(0);
+            }
+            return;
+        }
+
+        // Comprobamos si la escritura esta habilitada
         if (write_enable.read())
         {
 
@@ -114,7 +131,8 @@ SC_MODULE(BancoRegistros)
         // Registramos el proceso de escritura
         SC_METHOD(escribir_registro);
 
-        // La escritura ocurre en el flanco positivo
+        // La escritura (y el reset sincrono) ocurren en el flanco
+        // positivo del reloj, por eso solo somos sensibles a clk.pos()
         sensitive << clk.pos();
 
         // Evitamos una ejecucion inicial innecesaria
@@ -127,4 +145,6 @@ SC_MODULE(BancoRegistros)
         }
     }
 };
+
+#endif // BANCO_REGISTROS_H
 
