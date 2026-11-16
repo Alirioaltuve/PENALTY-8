@@ -1,1 +1,20 @@
 .vscode
+
+# Directorios de compilacion
+build/
+output/
+*.o
+*.out
+
+# Ejecutables generados en la raiz del repositorio
+/banco_registros
+/testbench
+/testbench_alu
+/testbench_pc
+/testbench_memoria_instrucciones
+/test_unidad_control
+/test_memoria_datos
+/test_registro_banderas
+/test_cpu_goalkeeper
+/test_arbitro
+/test_integracion
