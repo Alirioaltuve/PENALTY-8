@@ -2,7 +2,12 @@
 
 Proyecto universitario de Arquitectura del Computador (C++ + SystemC).
 
+4. Pipeline totalmente implementado y funcional.
+4. Pipeline totalmente implementado y funcional.
 PENALTY-8 está formado por dos computadores RISC de 8 bits:
+4. Pipeline totalmente implementado y funcional.
+5. No se implementa la bandera `V`.
+6. La interfaz gráfica (SFML) no forma parte de esta etapa.
 
 - **STRIKER-8**: calcula y ejecuta los disparos. *Desarrollado por Rafael.*
 - **GOALKEEPER-8**: analiza el disparo, decide su reacción y responde.
@@ -31,8 +36,8 @@ está disponible.
 | Memoria de datos    | 256 bytes                   |
 | ALU                 | 8 bits                      |
 | Reloj               | 10 ns / 100 MHz             |
-| Ejecución           | 1 instrucción por ciclo     |
-| Pipeline            | No                          |
+| Ejecución           | Pipeline RISC de 5 etapas     |
+| Pipeline            | Pipeline RISC de 5 etapas     |
 | Reset               | Síncrono, activo en alto    |
 
 ISA y formatos: ver `docs/isa.md`.
@@ -154,9 +159,7 @@ Detalle completo en `docs/protocolo_comunicacion.md`.
 2. El portero usa una estrategia simple: `dive = target`, `reach = 64`. No
    incluye clamping ni estrategia avanzada.
 3. El árbitro trata `power = 0` como tiro inválido (MISS), decisión documentada.
-4. Ejecución single-cycle sin pipeline, tal como exige la arquitectura.
 5. No se implementa la bandera `V`.
-6. La interfaz gráfica (SFML) no forma parte de esta etapa.
 
 ## Documentación por módulo
 
@@ -166,3 +169,30 @@ Ver la carpeta `docs/`:
 `cpu_goalkeeper.md`, `communication_mailbox.md`, `arbitro.md`, `integracion.md`,
 `programa_goalkeeper.md`, `protocolo_comunicacion.md`, `isa.md`,
 `cpu_striker.md`.
+
+## Arquitectura pipeline
+
+GOALKEEPER-8 implementa un pipeline RISC de cinco etapas que permite la superposición de instrucciones:
+
+- **ETAPA IF (Instruction Fetch)**: Obtiene la dirección desde el PC, lee la instrucción en memoria y calcula la dirección secuencial. El pipeline IF/ID captura la instrucción y el PC.
+
+- **ETAPA ID (Instruction Decode)**: Decodifica la instrucción mediante la Unidad de Control. Lee los registros del banco de registros y genera las señales de control necesarias. El pipeline ID/EX captura los operandos, el opcode, el inmediato y las señales de control.
+
+- **ETAPA EX (Execute)**: Ejecuta operaciones aritméticas y lógicas mediante la ALU. Resuelve las condiciones de salto y detecta hazards de datos. El pipeline EX/MEM captura el resultado de ALU, el registro destino y las banderas.
+
+- **ETAPA MEM (Memory Access)**: Accede a la memoria de datos para instrucciones LD y ST. Para las instrucciones que no acceden a memoria, pasa través sin efectos secundarios. El pipeline MEM/WB captura el dato de writeback.
+
+- **ETAPA WB (Write Back)**: Escribe resultados en el banco de registros cuando corresponde y actualiza las banderas C y Z. El pipeline MEM/WB decide si la escritura se realiza según el selector WB.
+
+### Registros intermedios del pipeline
+
+1. **IF/ID**: instrucción (16 bits), PC (8 bits), dirección secuencial siguiente (8 bits), válida.
+2. **ID/EX**: operandos A y B (8 bits cada uno), identificador de registro destino (3 bits), opcode (5 bits), inmediato (8 bits), opcode ALU (3 bits), B inmediato (1 bit), selector writeback (3 bits), escritura en memoria (1 bit), dirección memoria (8 bits), escritura E/S (2 bits), dirección E/S (8 bits), actualizar banderas (1 bit), salto (1 bit), dirección salto (8 bits), PC siguiente (8 bits), banderas C/Z, válida.
+3. **EX/MEM**: resultado ALU (8 bits), identificador de registro destino (3 bits), escritura en memoria (1 bit), dirección memoria (8 bits), datos para escritura (8 bits), banderas C/Z, válida.
+4. **MEM/WB**: selector writeback (3 bits), dato de writeback (8 bits), identificador de registro destino (3 bits), banderas C/Z, válida.
+
+### Forwarding y hazard detection
+
+El pipeline implementa forwarding desde EX/MEM y MEM/WB hacia la etapa EX para manejar dependencias de datos. También detecta hazards de load-use que requieren detener el pipeline temporalmente yinsertar burbujas. Los saltos y saltos condicionales provocan flush de las instrucciones incorrectas en el pipeline.
+
+Pruebas integradas: el pipeline ejecuta correctamente 4 disparos de penalti con resultados SAVE, GOAL (tardío), MISS y SAVE, con tiempos de reacción de 25-27 ciclos.
