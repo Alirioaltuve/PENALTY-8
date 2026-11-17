@@ -616,7 +616,8 @@ int sc_main(int argc, char* argv[])
     }
 
     // =====================================================
-    // N. WB_MEM: no se permite el fallback a MEM/WB
+    // N. WB_MEM: el stall evita el valor antiguo; el LD llega
+    //    a MEM/WB y se forwardea el dato correcto.
     // =====================================================
     {
         monitor.escrituras.clear();
@@ -624,10 +625,10 @@ int sc_main(int argc, char* argv[])
         p.push_back(formato_i(LDI, 0, 0x11));
         p.push_back(formato_i(LDI, 2, 0x55));
         p.push_back(formato_i(ST, 2, 0x10));   // mem[0x10] = 0x55
-        p.push_back(formato_i(LDI, 0, 0xAA));  // productor antiguo en MEM/WB
+        p.push_back(formato_i(LDI, 0, 0xAA));  // productor antiguo
         p.push_back(formato_i(LD, 0, 0x10));   // productor mas reciente, WB_MEM
-        p.push_back(formato_i(OUT, 0, 0x40));  // consumidor inmediato
-        ejecutar(cpu, reset, "N. WB_MEM: bloquear fallback a MEM/WB", p, 10);
+        p.push_back(formato_i(OUT, 0, 0x40));  // consumidor inmediato (load-use)
+        ejecutar(cpu, reset, "N. WB_MEM: stall + MEM/WB usan el dato del LD", p, 11);
 
         const auto* f = fila_ex(cpu, OUT);
         if (f)
@@ -636,20 +637,22 @@ int sc_main(int argc, char* argv[])
                       << "ID/EX=" << f->idex_a_orig.to_uint()
                       << " fwd=" << f->ex_a.to_uint()
                       << " fuente=" << fwd_nombre(f->fwd_a_sel.to_uint())
-                      << " (LD en EX/MEM es WB_MEM)\n";
+                      << " (tras stall, LD en MEM/WB)\n";
         }
         bool ev_block = f &&
-                        f->fwd_a_sel.to_uint() == CPU_Goalkeeper::FWD_NINGUNO &&
-                        f->ex_a.to_uint() == f->idex_a_orig.to_uint() &&
-                        f->ex_a.to_uint() == 0x11;
-        comprobar("N. OUT conserva el valor de ID/EX (no MEM/WB)", ev_block, "");
+                        f->fwd_a_sel.to_uint() == CPU_Goalkeeper::FWD_MEMWB &&
+                        f->ex_a.to_uint() == 0x55 &&
+                        f->ex_a.to_uint() != 0xAA;
+        comprobar("N. el stall entrega el dato del LD desde MEM/WB", ev_block, "");
+        comprobar("N. se inserta exactamente un stall",
+                  cpu.stalls_totales == 1, "");
 
         unsigned int puerto = monitor.escrituras.count(0x40) ?
                               monitor.escrituras[0x40] : -1;
         std::cout << "Puerto 0x40 = " << puerto
-                  << " (esperado 0x11; NO 0xAA ni 0x55)\n";
+                  << " (esperado 0x55; NO 0xAA)\n";
         comprobar("N. no se usa el valor antiguo 0xAA de MEM/WB",
-                  puerto == 0x11 && puerto != 0xAA && puerto != 0x55, "");
+                  puerto == 0x55 && puerto != 0xAA, "");
         comprobar("N. mem[0x10] contiene el dato del ST",
                   cpu.dmem.memoria[0x10].read().to_uint() == 0x55, "");
     }

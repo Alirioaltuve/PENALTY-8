@@ -12,6 +12,8 @@ int sc_main(int argc, char* argv[])
 
     sc_signal<bool> reset;
 
+    sc_signal<bool> stall;
+
     sc_signal<bool> salto;
 
     sc_signal<sc_uint<8>> direccion_salto;
@@ -32,6 +34,8 @@ int sc_main(int argc, char* argv[])
 
     pc.reset(reset);
 
+    pc.stall(stall);
+
     pc.salto(salto);
 
     pc.direccion_salto(direccion_salto);
@@ -45,6 +49,8 @@ int sc_main(int argc, char* argv[])
     clk.write(false);
 
     reset.write(true);
+
+    stall.write(false);
 
     salto.write(false);
 

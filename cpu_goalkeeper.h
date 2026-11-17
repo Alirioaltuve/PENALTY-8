@@ -45,6 +45,9 @@ SC_MODULE(CPU_Goalkeeper)
     // -------------------- Estado ------------------------
     sc_out<bool> halted;
 
+    // Congelacion del frente del pipeline por hazard load-use
+    sc_signal<bool> stall;
+
     // Origen seleccionado para un operando de EX
     enum { FWD_NINGUNO = 0, FWD_EXMEM = 1, FWD_MEMWB = 2 };
 
@@ -197,6 +200,9 @@ SC_MODULE(CPU_Goalkeeper)
         bool flag_z_fwd;
         sc_uint<2> flag_src;
         bool ctrl_salto;
+
+        // Evidencia de hazard/stall
+        bool stall;
     };
 
     struct EventoEscritura
@@ -210,17 +216,21 @@ SC_MODULE(CPU_Goalkeeper)
     std::vector<EventoEscritura> escrituras;
     bool trazando;
     int ciclo_traza;
+    int stalls_totales;
 
     void iniciar_traza()
     {
         traza.clear();
         ciclo_traza = 1;
+        stalls_totales = 0;
         trazando = true;
     }
 
     void detener_traza() { trazando = false; }
 
     void limpiar_eventos() { escrituras.clear(); }
+
+    void limpiar_stalls() { stalls_totales = 0; }
 
     sc_uint<8> valor_registro(int i) { return regs.registros[i & 0x7].read(); }
 
@@ -386,6 +396,62 @@ SC_MODULE(CPU_Goalkeeper)
         mem_write_enable.write(exmem_valid.read() && exmem_mem_write.read());
     }
 
+    // -------------------- Uso de operandos (compartido) -
+    static bool usa_rs1_op(unsigned int op)
+    {
+        return op == isa::ADD || op == isa::SUB || op == isa::AND ||
+               op == isa::OR  || op == isa::CMP || op == isa::MOV ||
+               op == isa::ST  || op == isa::OUT;
+    }
+
+    static bool usa_rs2_op(unsigned int op)
+    {
+        return op == isa::ADD || op == isa::SUB || op == isa::AND ||
+               op == isa::OR  || op == isa::CMP;
+    }
+
+    // -------------------- Burbuja en ID/EX -------------
+    void burbuja_idex()
+    {
+        idex_valid.write(false);
+        idex_instr.write(0);
+        idex_pc.write(0);
+        idex_a.write(0);
+        idex_b.write(0);
+        idex_rd.write(0);
+        idex_rs1.write(0);
+        idex_rs2.write(0);
+        idex_imm.write(0);
+        idex_alu_op.write(isa::ALU_ADD);
+        idex_alu_b_imm.write(false);
+        idex_wb_sel.write(WB_ALU);
+        idex_reg_write.write(false);
+        idex_mem_write.write(false);
+        idex_mem_addr.write(0);
+        idex_io_write.write(false);
+        idex_io_read.write(false);
+        idex_io_addr.write(0);
+        idex_write_flags.write(false);
+        idex_usa_rs1.write(false);
+        idex_usa_rs2.write(false);
+    }
+
+    // -------------------- Deteccion de load-use --------
+    void detectar_hazard()
+    {
+        bool ld_en_ex = idex_valid.read() &&
+            (idex_instr.read().range(15, 11).to_uint() == isa::LD);
+
+        unsigned int op = ifid_instr.read().range(15, 11).to_uint();
+        sc_uint<3> rd = idex_rd.read();
+
+        bool hazard = ld_en_ex && ifid_valid.read() &&
+            ((usa_rs1_op(op) && ctrl_reg_a_sel.read() == rd) ||
+             (usa_rs2_op(op) && ctrl_reg_b_sel.read() == rd));
+
+        stall.write(hazard);
+    }
+
     // -------------------- Salidas de E/S y HALT --------
     void salidas()
     {
@@ -416,6 +482,10 @@ SC_MODULE(CPU_Goalkeeper)
     void reloj()
     {
         bool rst = reset.read();
+        bool stall_actual = stall.read();
+
+        if (!rst && stall_actual)
+            stalls_totales++;
 
         // --- Estado previo (ciclo que termina) ---
         bool v_ifid = ifid_valid.read();
@@ -537,6 +607,7 @@ SC_MODULE(CPU_Goalkeeper)
             t.flag_z_fwd = flag_z_fwd_old;
             t.flag_src = flag_src_old;
             t.ctrl_salto = ctrl_salto_old;
+            t.stall = stall_actual;
             traza.push_back(t);
         }
 
@@ -607,67 +678,64 @@ SC_MODULE(CPU_Goalkeeper)
             return;
         }
 
-        // --- IF -> IF/ID ---
-        ifid_valid.write(true);
-        ifid_instr.write(instr_fetch);
-        ifid_pc.write(pc_actual);
-
-        // --- ID -> ID/EX (decodifica IF/ID previo) ---
-        if (v_ifid)
+        if (stall_actual)
         {
-            unsigned int op_id = instr_ifid.range(15, 11).to_uint();
-            bool usa_a = (op_id == isa::ADD || op_id == isa::SUB ||
-                          op_id == isa::AND || op_id == isa::OR ||
-                          op_id == isa::CMP || op_id == isa::MOV ||
-                          op_id == isa::ST  || op_id == isa::OUT);
-            bool usa_b = (op_id == isa::ADD || op_id == isa::SUB ||
-                          op_id == isa::AND || op_id == isa::OR ||
-                          op_id == isa::CMP);
-
-            // Bypass WB -> ID: resuelve la dependencia a distancia 3
-            // (productor en MEM/WB mientras el consumidor esta en ID).
-            sc_uint<8> a_idex = a_id;
-            sc_uint<8> b_idex = b_id;
-            if (usa_a && v_memwb && memwb_reg_write_old &&
-                memwb_rd_old == c_reg_a_sel)
-                a_idex = memwb_wb_data_old;
-            if (usa_b && v_memwb && memwb_reg_write_old &&
-                memwb_rd_old == c_reg_b_sel)
-                b_idex = memwb_wb_data_old;
-
-            idex_valid.write(true);
-            idex_instr.write(instr_ifid);
-            idex_pc.write(ifid_pc_old);
-            idex_a.write(a_idex);
-            idex_b.write(b_idex);
-            idex_rd.write(c_reg_w_sel);
-            idex_rs1.write(c_reg_a_sel);
-            idex_rs2.write(c_reg_b_sel);
-            idex_imm.write(instr_ifid.range(7, 0));
-            idex_alu_op.write(c_alu_op);
-            idex_alu_b_imm.write(c_alu_b_inm);
-            idex_wb_sel.write(c_wb_sel);
-            idex_reg_write.write(c_reg_write);
-            idex_mem_write.write(c_mem_write);
-            idex_mem_addr.write(c_mem_addr);
-            idex_io_write.write(c_io_write);
-            idex_io_read.write(c_io_read);
-            idex_io_addr.write(c_io_addr);
-            idex_write_flags.write(c_write_flags);
-            idex_usa_rs1.write(usa_a);
-            idex_usa_rs2.write(usa_b);
+            // Congelar IF/ID: el consumidor permanece en ID.
+            // Insertar una burbuja en ID/EX. EX/MEM y MEM/WB siguen
+            // avanzando con el estado previo.
+            burbuja_idex();
         }
         else
         {
-            idex_valid.write(false);
-            idex_instr.write(0);
-            idex_reg_write.write(false);
-            idex_mem_write.write(false);
-            idex_io_write.write(false);
-            idex_io_read.write(false);
-            idex_write_flags.write(false);
-            idex_usa_rs1.write(false);
-            idex_usa_rs2.write(false);
+            // --- IF -> IF/ID ---
+            ifid_valid.write(true);
+            ifid_instr.write(instr_fetch);
+            ifid_pc.write(pc_actual);
+
+            // --- ID -> ID/EX (decodifica IF/ID previo) ---
+            if (v_ifid)
+            {
+                unsigned int op_id = instr_ifid.range(15, 11).to_uint();
+                bool usa_a = usa_rs1_op(op_id);
+                bool usa_b = usa_rs2_op(op_id);
+
+                // Bypass WB -> ID: resuelve la dependencia a distancia 3
+                // (productor en MEM/WB mientras el consumidor esta en ID).
+                sc_uint<8> a_idex = a_id;
+                sc_uint<8> b_idex = b_id;
+                if (usa_a && v_memwb && memwb_reg_write_old &&
+                    memwb_rd_old == c_reg_a_sel)
+                    a_idex = memwb_wb_data_old;
+                if (usa_b && v_memwb && memwb_reg_write_old &&
+                    memwb_rd_old == c_reg_b_sel)
+                    b_idex = memwb_wb_data_old;
+
+                idex_valid.write(true);
+                idex_instr.write(instr_ifid);
+                idex_pc.write(ifid_pc_old);
+                idex_a.write(a_idex);
+                idex_b.write(b_idex);
+                idex_rd.write(c_reg_w_sel);
+                idex_rs1.write(c_reg_a_sel);
+                idex_rs2.write(c_reg_b_sel);
+                idex_imm.write(instr_ifid.range(7, 0));
+                idex_alu_op.write(c_alu_op);
+                idex_alu_b_imm.write(c_alu_b_inm);
+                idex_wb_sel.write(c_wb_sel);
+                idex_reg_write.write(c_reg_write);
+                idex_mem_write.write(c_mem_write);
+                idex_mem_addr.write(c_mem_addr);
+                idex_io_write.write(c_io_write);
+                idex_io_read.write(c_io_read);
+                idex_io_addr.write(c_io_addr);
+                idex_write_flags.write(c_write_flags);
+                idex_usa_rs1.write(usa_a);
+                idex_usa_rs2.write(usa_b);
+            }
+            else
+            {
+                burbuja_idex();
+            }
         }
 
         // --- EX -> EX/MEM (usa ALU de ID/EX previo) ---
@@ -747,6 +815,7 @@ SC_MODULE(CPU_Goalkeeper)
     {
         trazando = false;
         ciclo_traza = 1;
+        stalls_totales = 0;
 
         nunca_salto.write(false);
         dir_ignorada.write(0);
@@ -754,6 +823,7 @@ SC_MODULE(CPU_Goalkeeper)
         // ---------------- PC ----------------
         pc.clk(clk);
         pc.reset(reset);
+        pc.stall(stall);
         pc.salto(nunca_salto);
         pc.direccion_salto(dir_ignorada);
         pc.direccion_actual(pc_addr);
@@ -840,6 +910,11 @@ SC_MODULE(CPU_Goalkeeper)
                   << exmem_imm << exmem_io_data
                   << memwb_valid << memwb_reg_write << memwb_rd
                   << memwb_wb_data;
+
+        SC_METHOD(detectar_hazard);
+        sensitive << idex_valid << idex_instr << idex_rd
+                  << ifid_valid << ifid_instr
+                  << ctrl_reg_a_sel << ctrl_reg_b_sel;
 
         SC_METHOD(comb_flags);
         sensitive << idex_valid << idex_write_flags

@@ -11,6 +11,9 @@ SC_MODULE(PC)
     // Entrada de reinicio
     sc_in<bool> reset;
 
+    // Entrada de congelacion por stall (independiente del salto)
+    sc_in<bool> stall;
+
     // Entrada que indica si debemos realizar un salto
     sc_in<bool> salto;
 
@@ -32,7 +35,12 @@ SC_MODULE(PC)
             // Reiniciar el contador de programa
             valor_PC = 0;
         }
-        // Si no hay reset, comprobrar si debemos saltar
+        // El stall congela el PC conservando su valor actual
+        else if (stall.read() == true)
+        {
+            // No modificar valor_PC
+        }
+        // Si no hay reset ni stall, comprobar si debemos saltar
         else if (salto.read() == true)
         {
             // Cargar la direccion de destino
