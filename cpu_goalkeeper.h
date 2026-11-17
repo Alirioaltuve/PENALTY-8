@@ -23,8 +23,10 @@
 // flanco no son visibles hasta el siguiente delta, evitando que una
 // etapa lea datos recien producidos por otra en el mismo flanco.
 //
-// Esta fase NO incluye forwarding, deteccion de hazards, stalls ni
-// flush de saltos.
+// Incluye forwarding de operandos (EX/MEM y MEM/WB hacia EX, mas el
+// bypass WB -> ID) y forwarding de banderas C/Z.
+// NO incluye deteccion de hazards, stalls, resolucion de load-use,
+// resolucion de saltos ni flush de pipeline.
 // ============================================================
 
 SC_MODULE(CPU_Goalkeeper)
@@ -42,6 +44,12 @@ SC_MODULE(CPU_Goalkeeper)
 
     // -------------------- Estado ------------------------
     sc_out<bool> halted;
+
+    // Origen seleccionado para un operando de EX
+    enum { FWD_NINGUNO = 0, FWD_EXMEM = 1, FWD_MEMWB = 2 };
+
+    // Origen seleccionado para las banderas que consume ID
+    enum { FLAG_ARQ = 0, FLAG_EX = 1, FLAG_EXMEM = 2, FLAG_MEMWB = 3 };
 
     // -------------------- Señales del camino de datos ---
     sc_signal<sc_uint<8>> pc_addr;
@@ -78,8 +86,17 @@ SC_MODULE(CPU_Goalkeeper)
     sc_signal<bool> alu_carry;
     sc_signal<bool> alu_zero;
 
+    sc_signal<sc_uint<8>> ex_a;
+    sc_signal<sc_uint<8>> ex_b;
+    sc_signal<sc_uint<2>> fwd_a_sel;
+    sc_signal<sc_uint<2>> fwd_b_sel;
+
     sc_signal<bool> flag_c_arch;
     sc_signal<bool> flag_z_arch;
+
+    sc_signal<bool> flag_c_fwd;
+    sc_signal<bool> flag_z_fwd;
+    sc_signal<sc_uint<2>> flag_src;
 
     sc_signal<bool> wb_enable;
     sc_signal<bool> wb_flags_enable;
@@ -114,6 +131,8 @@ SC_MODULE(CPU_Goalkeeper)
     sc_signal<bool> idex_io_read;
     sc_signal<sc_uint<8>> idex_io_addr;
     sc_signal<bool> idex_write_flags;
+    sc_signal<bool> idex_usa_rs1;
+    sc_signal<bool> idex_usa_rs2;
 
     // ---------- Pipeline EX/MEM ----------
     sc_signal<bool> exmem_valid;
@@ -160,6 +179,24 @@ SC_MODULE(CPU_Goalkeeper)
         bool wb_escribe;
         sc_uint<3> wb_rd;
         sc_uint<8> wb_dato;
+
+        // Evidencia de forwarding en EX (instruccion en ID/EX)
+        sc_uint<3> idex_rs1;
+        sc_uint<3> idex_rs2;
+        bool idex_usa_rs1;
+        bool idex_usa_rs2;
+        sc_uint<8> idex_a_orig;
+        sc_uint<8> idex_b_orig;
+        sc_uint<8> ex_a;
+        sc_uint<8> ex_b;
+        sc_uint<2> fwd_a_sel;
+        sc_uint<2> fwd_b_sel;
+
+        // Evidencia de forwarding de banderas para la instruccion en ID
+        bool flag_c_fwd;
+        bool flag_z_fwd;
+        sc_uint<2> flag_src;
+        bool ctrl_salto;
     };
 
     struct EventoEscritura
@@ -202,7 +239,138 @@ SC_MODULE(CPU_Goalkeeper)
         if (idex_alu_b_imm.read())
             alu_b.write(idex_imm.read());
         else
-            alu_b.write(idex_b.read());
+            alu_b.write(ex_b.read());
+    }
+
+    // -------------------- Combinacional: forwarding EX -
+    void comb_forward()
+    {
+        bool consumidor = idex_valid.read();
+        bool usa_a = idex_usa_rs1.read();
+        bool usa_b = idex_usa_rs2.read();
+        sc_uint<3> rs1 = idex_rs1.read();
+        sc_uint<3> rs2 = idex_rs2.read();
+
+        bool exmem_escribe = exmem_valid.read() && exmem_reg_write.read();
+        sc_uint<3> exmem_destino = exmem_rd.read();
+        bool exmem_listo = false;
+        sc_uint<8> exmem_valor = 0;
+        if (exmem_escribe)
+        {
+            switch (exmem_wb_sel.read().to_uint())
+            {
+                case WB_INM:
+                    exmem_valor = exmem_imm.read();
+                    exmem_listo = true;
+                    break;
+                case WB_RA:
+                    exmem_valor = exmem_a.read();
+                    exmem_listo = true;
+                    break;
+                case WB_IO:
+                    exmem_valor = exmem_io_data.read();
+                    exmem_listo = true;
+                    break;
+                case WB_MEM:
+                    // El dato de LD aun no existe en EX/MEM.
+                    exmem_listo = false;
+                    break;
+                default: // WB_ALU
+                    exmem_valor = exmem_alu_result.read();
+                    exmem_listo = true;
+                    break;
+            }
+        }
+
+        bool memwb_escribe = memwb_valid.read() && memwb_reg_write.read();
+        sc_uint<3> memwb_destino = memwb_rd.read();
+        sc_uint<8> memwb_valor = memwb_wb_data.read();
+
+        bool a_exmem_coincide = consumidor && usa_a && exmem_escribe &&
+                                (exmem_destino == rs1);
+        bool b_exmem_coincide = consumidor && usa_b && exmem_escribe &&
+                                (exmem_destino == rs2);
+
+        if (a_exmem_coincide)
+        {
+            if (exmem_listo)
+            {
+                ex_a.write(exmem_valor);
+                fwd_a_sel.write(FWD_EXMEM);
+            }
+            else
+            {
+                // EX/MEM escribe este registro pero su resultado (WB_MEM)
+                // aun no esta disponible: se conserva el valor de ID/EX y
+                // NO se permite el fallback a MEM/WB.
+                ex_a.write(idex_a.read());
+                fwd_a_sel.write(FWD_NINGUNO);
+            }
+        }
+        else if (consumidor && usa_a && memwb_escribe && memwb_destino == rs1)
+        {
+            ex_a.write(memwb_valor);
+            fwd_a_sel.write(FWD_MEMWB);
+        }
+        else
+        {
+            ex_a.write(idex_a.read());
+            fwd_a_sel.write(FWD_NINGUNO);
+        }
+
+        if (b_exmem_coincide)
+        {
+            if (exmem_listo)
+            {
+                ex_b.write(exmem_valor);
+                fwd_b_sel.write(FWD_EXMEM);
+            }
+            else
+            {
+                // Mismo criterio para el operando B.
+                ex_b.write(idex_b.read());
+                fwd_b_sel.write(FWD_NINGUNO);
+            }
+        }
+        else if (consumidor && usa_b && memwb_escribe && memwb_destino == rs2)
+        {
+            ex_b.write(memwb_valor);
+            fwd_b_sel.write(FWD_MEMWB);
+        }
+        else
+        {
+            ex_b.write(idex_b.read());
+            fwd_b_sel.write(FWD_NINGUNO);
+        }
+    }
+
+    // -------------------- Combinacional: banderas ------
+    void comb_flags()
+    {
+        if (idex_valid.read() && idex_write_flags.read())
+        {
+            flag_c_fwd.write(alu_carry.read());
+            flag_z_fwd.write(alu_zero.read());
+            flag_src.write(FLAG_EX);
+        }
+        else if (exmem_valid.read() && exmem_write_flags.read())
+        {
+            flag_c_fwd.write(exmem_flag_c.read());
+            flag_z_fwd.write(exmem_flag_z.read());
+            flag_src.write(FLAG_EXMEM);
+        }
+        else if (memwb_valid.read() && memwb_write_flags.read())
+        {
+            flag_c_fwd.write(memwb_flag_c.read());
+            flag_z_fwd.write(memwb_flag_z.read());
+            flag_src.write(FLAG_MEMWB);
+        }
+        else
+        {
+            flag_c_fwd.write(flag_c_arch.read());
+            flag_z_fwd.write(flag_z_arch.read());
+            flag_src.write(FLAG_ARQ);
+        }
     }
 
     // -------------------- Combinacional: escritura WB --
@@ -233,7 +401,7 @@ SC_MODULE(CPU_Goalkeeper)
         else
             io_addr.write(0);
 
-        io_wdata.write(idex_a.read());
+        io_wdata.write(ex_a.read());
 
         bool h = memwb_valid.read() &&
                  (memwb_instr.read().range(15, 11).to_uint() == isa::HALT);
@@ -272,6 +440,18 @@ SC_MODULE(CPU_Goalkeeper)
         bool idex_io_read_old = idex_io_read.read();
         sc_uint<8> idex_io_addr_old = idex_io_addr.read();
         bool idex_write_flags_old = idex_write_flags.read();
+        bool idex_usa_rs1_old = idex_usa_rs1.read();
+        bool idex_usa_rs2_old = idex_usa_rs2.read();
+
+        sc_uint<8> ex_a_old = ex_a.read();
+        sc_uint<8> ex_b_old = ex_b.read();
+        sc_uint<2> fwd_a_sel_old = fwd_a_sel.read();
+        sc_uint<2> fwd_b_sel_old = fwd_b_sel.read();
+
+        bool flag_c_fwd_old = flag_c_fwd.read();
+        bool flag_z_fwd_old = flag_z_fwd.read();
+        sc_uint<2> flag_src_old = flag_src.read();
+        bool ctrl_salto_old = ctrl_salto.read();
 
         bool v_exmem = exmem_valid.read();
         sc_uint<16> instr_exmem = exmem_instr.read();
@@ -341,6 +521,22 @@ SC_MODULE(CPU_Goalkeeper)
             t.wb_escribe = v_memwb && memwb_reg_write_old;
             t.wb_rd = memwb_rd_old;
             t.wb_dato = memwb_wb_data_old;
+
+            t.idex_rs1 = idex_rs1_old;
+            t.idex_rs2 = idex_rs2_old;
+            t.idex_usa_rs1 = idex_usa_rs1_old;
+            t.idex_usa_rs2 = idex_usa_rs2_old;
+            t.idex_a_orig = idex_a_old;
+            t.idex_b_orig = idex_b_old;
+            t.ex_a = ex_a_old;
+            t.ex_b = ex_b_old;
+            t.fwd_a_sel = fwd_a_sel_old;
+            t.fwd_b_sel = fwd_b_sel_old;
+
+            t.flag_c_fwd = flag_c_fwd_old;
+            t.flag_z_fwd = flag_z_fwd_old;
+            t.flag_src = flag_src_old;
+            t.ctrl_salto = ctrl_salto_old;
             traza.push_back(t);
         }
 
@@ -380,6 +576,8 @@ SC_MODULE(CPU_Goalkeeper)
             idex_io_read.write(false);
             idex_io_addr.write(0);
             idex_write_flags.write(false);
+            idex_usa_rs1.write(false);
+            idex_usa_rs2.write(false);
 
             exmem_valid.write(false);
             exmem_instr.write(0);
@@ -417,11 +615,31 @@ SC_MODULE(CPU_Goalkeeper)
         // --- ID -> ID/EX (decodifica IF/ID previo) ---
         if (v_ifid)
         {
+            unsigned int op_id = instr_ifid.range(15, 11).to_uint();
+            bool usa_a = (op_id == isa::ADD || op_id == isa::SUB ||
+                          op_id == isa::AND || op_id == isa::OR ||
+                          op_id == isa::CMP || op_id == isa::MOV ||
+                          op_id == isa::ST  || op_id == isa::OUT);
+            bool usa_b = (op_id == isa::ADD || op_id == isa::SUB ||
+                          op_id == isa::AND || op_id == isa::OR ||
+                          op_id == isa::CMP);
+
+            // Bypass WB -> ID: resuelve la dependencia a distancia 3
+            // (productor en MEM/WB mientras el consumidor esta en ID).
+            sc_uint<8> a_idex = a_id;
+            sc_uint<8> b_idex = b_id;
+            if (usa_a && v_memwb && memwb_reg_write_old &&
+                memwb_rd_old == c_reg_a_sel)
+                a_idex = memwb_wb_data_old;
+            if (usa_b && v_memwb && memwb_reg_write_old &&
+                memwb_rd_old == c_reg_b_sel)
+                b_idex = memwb_wb_data_old;
+
             idex_valid.write(true);
             idex_instr.write(instr_ifid);
             idex_pc.write(ifid_pc_old);
-            idex_a.write(a_id);
-            idex_b.write(b_id);
+            idex_a.write(a_idex);
+            idex_b.write(b_idex);
             idex_rd.write(c_reg_w_sel);
             idex_rs1.write(c_reg_a_sel);
             idex_rs2.write(c_reg_b_sel);
@@ -436,6 +654,8 @@ SC_MODULE(CPU_Goalkeeper)
             idex_io_read.write(c_io_read);
             idex_io_addr.write(c_io_addr);
             idex_write_flags.write(c_write_flags);
+            idex_usa_rs1.write(usa_a);
+            idex_usa_rs2.write(usa_b);
         }
         else
         {
@@ -446,6 +666,8 @@ SC_MODULE(CPU_Goalkeeper)
             idex_io_write.write(false);
             idex_io_read.write(false);
             idex_write_flags.write(false);
+            idex_usa_rs1.write(false);
+            idex_usa_rs2.write(false);
         }
 
         // --- EX -> EX/MEM (usa ALU de ID/EX previo) ---
@@ -454,14 +676,14 @@ SC_MODULE(CPU_Goalkeeper)
             exmem_valid.write(true);
             exmem_instr.write(instr_idex);
             exmem_alu_result.write(res_alu);
-            exmem_a.write(idex_a_old);
+            exmem_a.write(ex_a_old);
             exmem_imm.write(idex_imm_old);
             exmem_rd.write(idex_rd_old);
             exmem_wb_sel.write(idex_wb_sel_old);
             exmem_reg_write.write(idex_reg_write_old);
             exmem_mem_write.write(idex_mem_write_old);
             exmem_mem_addr.write(idex_mem_addr_old);
-            exmem_mem_wdata.write(idex_a_old);
+            exmem_mem_wdata.write(ex_a_old);
             exmem_io_read.write(idex_io_read_old);
             exmem_io_data.write(dato_io);
             exmem_write_flags.write(idex_write_flags_old);
@@ -542,8 +764,8 @@ SC_MODULE(CPU_Goalkeeper)
 
         // ---------------- Unidad de control (ID) -------
         uc.instruccion(ifid_instr);
-        uc.flag_c(flag_c_arch);
-        uc.flag_z(flag_z_arch);
+        uc.flag_c(flag_c_fwd);
+        uc.flag_z(flag_z_fwd);
 
         uc.reg_write(ctrl_reg_write);
         uc.reg_a_sel(ctrl_reg_a_sel);
@@ -578,7 +800,7 @@ SC_MODULE(CPU_Goalkeeper)
         regs.read_data_2(id_reg_b);
 
         // ---------------- ALU (EX) --------------------
-        alu.A(idex_a);
+        alu.A(ex_a);
         alu.B(alu_b);
         alu.operacion(idex_alu_op);
         alu.resultado(alu_result);
@@ -608,7 +830,25 @@ SC_MODULE(CPU_Goalkeeper)
         dont_initialize();
 
         SC_METHOD(comb_alu_b);
-        sensitive << idex_alu_b_imm << idex_imm << idex_b;
+        sensitive << idex_alu_b_imm << idex_imm << ex_b;
+
+        SC_METHOD(comb_forward);
+        sensitive << idex_valid << idex_usa_rs1 << idex_usa_rs2
+                  << idex_rs1 << idex_rs2 << idex_a << idex_b
+                  << exmem_valid << exmem_reg_write << exmem_rd
+                  << exmem_wb_sel << exmem_alu_result << exmem_a
+                  << exmem_imm << exmem_io_data
+                  << memwb_valid << memwb_reg_write << memwb_rd
+                  << memwb_wb_data;
+
+        SC_METHOD(comb_flags);
+        sensitive << idex_valid << idex_write_flags
+                  << alu_carry << alu_zero
+                  << exmem_valid << exmem_write_flags
+                  << exmem_flag_c << exmem_flag_z
+                  << memwb_valid << memwb_write_flags
+                  << memwb_flag_c << memwb_flag_z
+                  << flag_c_arch << flag_z_arch;
 
         SC_METHOD(comb_wb);
         sensitive << memwb_valid << memwb_reg_write << memwb_write_flags;
@@ -618,7 +858,7 @@ SC_MODULE(CPU_Goalkeeper)
 
         SC_METHOD(salidas);
         sensitive << idex_valid << idex_io_write << idex_io_read
-                  << idex_io_addr << idex_a
+                  << idex_io_addr << ex_a
                   << memwb_valid << memwb_instr;
     }
 };

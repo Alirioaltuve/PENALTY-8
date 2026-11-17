@@ -26,6 +26,7 @@ set(TESTBENCHES
     test_registro_banderas
     test_cpu_goalkeeper
     test_pipeline
+    test_forwarding
     test_arbitro
     testbench_integracion
 )
@@ -47,5 +48,6 @@ add_test(NAME memoria_datos              COMMAND test_memoria_datos)
 add_test(NAME registro_banderas          COMMAND test_registro_banderas)
 add_test(NAME cpu_goalkeeper             COMMAND test_cpu_goalkeeper)
 add_test(NAME pipeline                   COMMAND test_pipeline)
+add_test(NAME forwarding                 COMMAND test_forwarding)
 add_test(NAME arbitro                    COMMAND test_arbitro)
 add_test(NAME integracion                COMMAND testbench_integracion)
