@@ -1,0 +1,17 @@
+# Binarios generados por la compilacion
+pruebas_striker
+pruebas_striker.exe
+*.o
+*.obj
+*.exe
+
+# SystemC y artefactos de simulacion
+*.vcd
+*.wlf
+obj_dir/
+
+# Editores y sistema
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
