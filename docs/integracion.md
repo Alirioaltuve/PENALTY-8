@@ -52,17 +52,22 @@ El programa del portero (ver `programa_goalkeeper.md`).
 - Disparo 3 → MISS (fuera de X).
 - Disparo 4 → SAVE.
 
-Verifica además `shot_id`, `reaction_ticks` y múltiples solicitudes seguidas.
+`test_goalkeeper_strategy.cpp` ejecuta 11 solicitudes, incluidas las fronteras
+`power = 127/128/129` y `flight_ticks = 127/128/129`, y comprueba los valores
+reales de los registros que alimentan los `OUT`. También verifica `shot_id`,
+`reaction_ticks` y múltiples solicitudes seguidas.
 
 ## 13. Ejemplo sencillo
 ```
 Escenario SAVE:
 STRIKER: id=1, target=(128,128), power=100, flight=200
-GOALKEEPER: dive=(128,128), reach=(64,64), reaction≈25
+GOALKEEPER: dive=(144,128), reach=(16,16), reaction=43
 ARBITRO: reaction<=flight y alcanza → SAVE
 ```
 
 ## 14. Decisiones de diseño
+- `power` y `flight_ticks` son campos independientes; no se deriva uno del otro
+  ni se valida `flight = 256 - power`.
 - **No existe código de STRIKER-8 en el repositorio.** Para no inventar acuerdos
   con Rafael, el lado STRIKER se simula a nivel de protocolo con `StrikerSim`.
   Esto valida el mailbox y la CPU, pero **no** sustituye la integración con el

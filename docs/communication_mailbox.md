@@ -53,9 +53,13 @@ Protocolo y temporizador en `clk.pos()`.
 ## 12. Pruebas realizadas
 En `testbench_integracion.cpp`:
 - 4 disparos consecutivos, con REQ/ACK correctos.
-- `reaction_ticks` medido (≈25–27 ciclos).
+- `reaction_ticks` medido (40–44 ciclos en la integración actual; depende del
+  programa del portero).
 - `shot_id` preservado.
 - Sin pérdida de solicitudes entre disparos.
+
+En `test_communication.cpp`, H verifica un valor exacto de 5 ciclos e I verifica
+la saturación en 255.
 
 ## 13. Ejemplo sencillo
 ```
@@ -69,5 +73,6 @@ STRIKER: lee 0x16=1 y 0x20..0x25, escribe 0x15=0
 - `reaction_ticks` se sobrescribe con el valor medido para no “inventar” el
   tiempo desde el programa, como exige el enunciado.
 - Una sola solicitud pendiente a la vez.
+- `power` y `flight_ticks` son datos independientes; el Mailbox los transfiere sin validar `flight = 256 - power`.
 - El mapa de direcciones es el propuesto; **debe confirmarse con Rafael** si su
   STRIKER-8 usa otro mapa.

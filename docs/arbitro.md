@@ -59,3 +59,5 @@ target=(128,128), dive=(128,128), reach=(10,10), reaction=50, flight=100
   documentada; si se prefiere otro criterio, es un cambio localizado.
 - Las comparaciones usan diferencias absolutas para respetar las coordenadas
   `0..255`.
+- `power` y `flight_ticks` se reciben como campos independientes; el Árbitro no
+  deriva ni valida `flight = 256 - power`.

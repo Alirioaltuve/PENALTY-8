@@ -20,16 +20,21 @@ SC_MODULE(MonitorSalida)
     sc_in<sc_uint<8>> io_addr;
     sc_in<sc_uint<8>> io_wdata;
 
+    int pulsos;
     std::map<int, int> escrituras;
 
     void capturar()
     {
         if (io_write.read())
+        {
+            pulsos++;
             escrituras[io_addr.read().to_uint()] = io_wdata.read().to_uint();
+        }
     }
 
     SC_CTOR(MonitorSalida)
     {
+        pulsos = 0;
         SC_METHOD(capturar);
         sensitive << clk.neg();
         dont_initialize();
@@ -402,7 +407,9 @@ int sc_main(int argc, char* argv[])
         p.push_back(formato_i(LDI, 1, 5));
         p.push_back(formato_i(LDI, 2, 5));
         p.push_back(formato_r(CMP, 1, 1, 2));
-        p.push_back(formato_j(JEQ, 0));
+        p.push_back(formato_j(JEQ, 5));
+        p.push_back(formato_i(LDI, 5, 0x99));  // anulada por el branch
+        p.push_back(formato_i(HALT, 0, 0));
         ejecutar(cpu, reset, "F1. Banderas desde EX", p, 8);
 
         const auto* f = fila_id(cpu, JEQ);
@@ -412,6 +419,7 @@ int sc_main(int argc, char* argv[])
         comprobar("F1. JEQ ve C/Z del CMP en EX", ev, "");
         comprobar("F1. banderas arquitectonicas actualizadas",
                   cpu.flag_c_arch.read() && cpu.flag_z_arch.read(), "");
+        comprobar("F1. branch tomado con un flush", cpu.branches_tomados == 1, "");
     }
 
     // =====================================================
@@ -423,7 +431,9 @@ int sc_main(int argc, char* argv[])
         p.push_back(formato_i(LDI, 2, 5));
         p.push_back(formato_r(CMP, 1, 1, 2));
         p.push_back(formato_i(NOP, 0, 0));
-        p.push_back(formato_j(JEQ, 0));
+        p.push_back(formato_j(JEQ, 6));
+        p.push_back(formato_i(LDI, 5, 0x99));  // anulada por el branch
+        p.push_back(formato_i(HALT, 0, 0));
         ejecutar(cpu, reset, "F2. Banderas desde EX/MEM", p, 9);
 
         const auto* f = fila_id(cpu, JEQ);
@@ -431,6 +441,7 @@ int sc_main(int argc, char* argv[])
                   f->flag_src.to_uint() == CPU_Goalkeeper::FLAG_EXMEM &&
                   f->flag_c_fwd && f->flag_z_fwd && f->ctrl_salto;
         comprobar("F2. JEQ ve C/Z del CMP en EX/MEM", ev, "");
+        comprobar("F2. branch tomado con un flush", cpu.branches_tomados == 1, "");
     }
 
     // =====================================================
@@ -443,7 +454,9 @@ int sc_main(int argc, char* argv[])
         p.push_back(formato_r(CMP, 1, 1, 2));
         p.push_back(formato_i(NOP, 0, 0));
         p.push_back(formato_i(NOP, 0, 0));
-        p.push_back(formato_j(JEQ, 0));
+        p.push_back(formato_j(JEQ, 7));
+        p.push_back(formato_i(LDI, 5, 0x99));  // anulada por el branch
+        p.push_back(formato_i(HALT, 0, 0));
         ejecutar(cpu, reset, "F3. Banderas desde MEM/WB", p, 10);
 
         const auto* f = fila_id(cpu, JEQ);
@@ -451,6 +464,7 @@ int sc_main(int argc, char* argv[])
                   f->flag_src.to_uint() == CPU_Goalkeeper::FLAG_MEMWB &&
                   f->flag_c_fwd && f->flag_z_fwd && f->ctrl_salto;
         comprobar("F3. JEQ ve C/Z del CMP en MEM/WB", ev, "");
+        comprobar("F3. branch tomado con un flush", cpu.branches_tomados == 1, "");
     }
 
     // =====================================================
@@ -553,6 +567,7 @@ int sc_main(int argc, char* argv[])
     // =====================================================
     {
         monitor.escrituras.clear();
+        monitor.pulsos = 0;
         std::vector<sc_uint<16>> p;
         p.push_back(formato_i(LDI, 1, 42));
         p.push_back(formato_i(OUT, 1, 0x40));
@@ -566,8 +581,10 @@ int sc_main(int argc, char* argv[])
 
         unsigned int puerto = monitor.escrituras.count(0x40) ?
                               monitor.escrituras[0x40] : -1;
-        std::cout << "Puerto 0x40 = " << puerto << " (esperado 42)\n";
+        std::cout << "Puerto 0x40 = " << puerto << " (esperado 42), pulsos="
+                  << monitor.pulsos << "\n";
         comprobar("K. puerto de salida recibe 42", puerto == 42, "");
+        comprobar("K. exactamente un pulso OUT", monitor.pulsos == 1, "");
     }
 
     // =====================================================
@@ -621,6 +638,7 @@ int sc_main(int argc, char* argv[])
     // =====================================================
     {
         monitor.escrituras.clear();
+        monitor.pulsos = 0;
         std::vector<sc_uint<16>> p;
         p.push_back(formato_i(LDI, 0, 0x11));
         p.push_back(formato_i(LDI, 2, 0x55));
@@ -650,9 +668,11 @@ int sc_main(int argc, char* argv[])
         unsigned int puerto = monitor.escrituras.count(0x40) ?
                               monitor.escrituras[0x40] : -1;
         std::cout << "Puerto 0x40 = " << puerto
-                  << " (esperado 0x55; NO 0xAA)\n";
+                  << " (esperado 0x55; NO 0xAA), pulsos="
+                  << monitor.pulsos << "\n";
         comprobar("N. no se usa el valor antiguo 0xAA de MEM/WB",
                   puerto == 0x55 && puerto != 0xAA, "");
+        comprobar("N. exactamente un pulso OUT", monitor.pulsos == 1, "");
         comprobar("N. mem[0x10] contiene el dato del ST",
                   cpu.dmem.memoria[0x10].read().to_uint() == 0x55, "");
     }

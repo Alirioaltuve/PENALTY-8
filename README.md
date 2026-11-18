@@ -116,7 +116,13 @@ g++ -std=c++17 -I/usr/include testbench_integracion.cpp -lsystemc -o sim
 
 El **programa del portero** (`goalkeeper_program.h`) implementa la lógica:
 espera REQ, lee el disparo, calcula la respuesta (dive/reach), la escribe y
-activa ACK.
+activa ACK. Reglas actuales:
+
+- `dive_x = target_x + 16` si `shot_id` es impar; `target_x - 16` si es par.
+- `dive_y = target_y + 16` si `flight_ticks < 128`; `target_y` si es `>= 128`.
+- `reach = 16 + 8` si `power >= 128`, menos 8 si `flight_ticks < 128`;
+  `reach_x = reach_y = reach`.
+- `power` y `flight_ticks` son independientes; no se usa `flight = 256 - power`.
 
 ## Cómo se comunican
 
@@ -156,8 +162,9 @@ Detalle completo en `docs/protocolo_comunicacion.md`.
 
 1. **No hay STRIKER-8 real** en el repositorio: se usa `StrikerSim`. El mapa de
    E/S y el protocolo deben confirmarse con Rafael.
-2. El portero usa una estrategia simple: `dive = target`, `reach = 64`. No
-   incluye clamping ni estrategia avanzada.
+2. El portero usa una estrategia determinista con sesgo de `±16` en `dive_x`,
+   sesgo vertical según `flight_ticks` y `reach` de 8, 16 o 24. Está definida
+   para `target_x/y` en `[32,223]`; no incluye clamping para todo 0–255.
 3. El árbitro trata `power = 0` como tiro inválido (MISS), decisión documentada.
 5. No se implementa la bandera `V`.
 
@@ -195,4 +202,4 @@ GOALKEEPER-8 implementa un pipeline RISC de cinco etapas que permite la superpos
 
 El pipeline implementa forwarding desde EX/MEM y MEM/WB hacia la etapa EX para manejar dependencias de datos. También detecta hazards de load-use que requieren detener el pipeline temporalmente yinsertar burbujas. Los saltos y saltos condicionales provocan flush de las instrucciones incorrectas en el pipeline.
 
-Pruebas integradas: el pipeline ejecuta correctamente 4 disparos de penalti con resultados SAVE, GOAL (tardío), MISS y SAVE, con tiempos de reacción de 25-27 ciclos.
+Pruebas integradas: el pipeline ejecuta correctamente 4 disparos de penalti con resultados SAVE, GOAL (tardío), MISS y SAVE, con tiempos de reacción de 40–44 ciclos. `test_goalkeeper_strategy` cubre además 11 solicitudes, incluidas las fronteras de `power` y `flight_ticks` en 127/128/129 y la verificación de los registros reales que alimentan los `OUT`.

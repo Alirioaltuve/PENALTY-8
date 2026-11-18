@@ -148,31 +148,44 @@ SC_MODULE(CommunicationMailbox)
         if (st_we.read() == true)
         {
             unsigned int a = st_addr.read().to_uint();
-            switch (a)
+
+            if (a >= 0x10 && a <= 0x14)
             {
-                case 0x10: r_shot_id.write(st_wdata.read()); break;
-                case 0x11: r_target_x.write(st_wdata.read()); break;
-                case 0x12: r_target_y.write(st_wdata.read()); break;
-                case 0x13: r_power.write(st_wdata.read()); break;
-                case 0x14: r_flight.write(st_wdata.read()); break;
-                case 0x15:
-                    if (st_wdata.read().to_uint() != 0)
+                // Los campos de la solicitud permanecen estables
+                // mientras hay una solicitud pendiente.
+                if (!r_req.read())
+                {
+                    switch (a)
                     {
-                        // Nueva solicitud aceptada
+                        case 0x10: r_shot_id.write(st_wdata.read()); break;
+                        case 0x11: r_target_x.write(st_wdata.read()); break;
+                        case 0x12: r_target_y.write(st_wdata.read()); break;
+                        case 0x13: r_power.write(st_wdata.read()); break;
+                        case 0x14: r_flight.write(st_wdata.read()); break;
+                        default: break;
+                    }
+                }
+            }
+            else if (a == 0x15)
+            {
+                if (st_wdata.read().to_uint() != 0)
+                {
+                    // Nueva solicitud solo si no hay una pendiente.
+                    if (!r_req.read())
+                    {
                         r_req.write(true);
                         r_ack.write(false);
                         r_ticks.write(0);
                         contando = true;
                     }
-                    else
-                    {
-                        // Fin de la solicitud: bajar REQ y ACK
-                        r_req.write(false);
-                        r_ack.write(false);
-                        contando = false;
-                    }
-                    break;
-                default: break;
+                }
+                else
+                {
+                    // Fin de la solicitud: bajar REQ y ACK.
+                    r_req.write(false);
+                    r_ack.write(false);
+                    contando = false;
+                }
             }
         }
 
@@ -180,20 +193,36 @@ SC_MODULE(CommunicationMailbox)
         if (gk_we.read() == true)
         {
             unsigned int a = gk_addr.read().to_uint();
-            switch (a)
+
+            if (a == 0x16)
             {
-                case 0x20: r_resp_id.write(gk_wdata.read()); break;
-                case 0x21: r_dive_x.write(gk_wdata.read()); break;
-                case 0x22: r_dive_y.write(gk_wdata.read()); break;
-                case 0x24: r_reach_x.write(gk_wdata.read()); break;
-                case 0x25: r_reach_y.write(gk_wdata.read()); break;
-                case 0x23: break; // reaction_ticks lo llena el mailbox
-                case 0x16:
-                    // Confirmacion de respuesta
+                // ACK solo con solicitud pendiente y una sola vez.
+                if (r_req.read() && !r_ack.read())
+                {
                     r_ack.write(true);
                     contando = false;
-                    break;
-                default: break;
+                }
+            }
+            else if (a == 0x23)
+            {
+                // reaction_ticks lo llena el mailbox.
+            }
+            else if (a >= 0x20 && a <= 0x25)
+            {
+                // La respuesta solo se acepta mientras la solicitud
+                // esta pendiente y aun no se ha confirmado ACK.
+                if (r_req.read() && !r_ack.read())
+                {
+                    switch (a)
+                    {
+                        case 0x20: r_resp_id.write(gk_wdata.read()); break;
+                        case 0x21: r_dive_x.write(gk_wdata.read()); break;
+                        case 0x22: r_dive_y.write(gk_wdata.read()); break;
+                        case 0x24: r_reach_x.write(gk_wdata.read()); break;
+                        case 0x25: r_reach_y.write(gk_wdata.read()); break;
+                        default: break;
+                    }
+                }
             }
         }
     }

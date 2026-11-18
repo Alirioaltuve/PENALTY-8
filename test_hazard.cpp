@@ -18,16 +18,21 @@ SC_MODULE(MonitorSalida)
     sc_in<sc_uint<8>> io_addr;
     sc_in<sc_uint<8>> io_wdata;
 
+    int pulsos;
     std::map<int, int> escrituras;
 
     void capturar()
     {
         if (io_write.read())
+        {
+            pulsos++;
             escrituras[io_addr.read().to_uint()] = io_wdata.read().to_uint();
+        }
     }
 
     SC_CTOR(MonitorSalida)
     {
+        pulsos = 0;
         SC_METHOD(capturar);
         sensitive << clk.neg();
         dont_initialize();
@@ -366,17 +371,22 @@ int sc_main(int argc, char* argv[])
         auto p = base();
         p.push_back(formato_i(LD, 1, 0x10));
         p.push_back(formato_r(CMP, 0, 1, 4));
-        p.push_back(formato_j(JEQ, 0));
+        p.push_back(formato_j(JEQ, 7));
+        p.push_back(formato_i(LDI, 3, 0x99));  // anulada por el branch
+        p.push_back(formato_i(HALT, 0, 0));
         ejecutar(cpu, reset, "C. LD -> CMP -> JEQ", p, 11);
 
         std::cout << "Resultado: C=" << cpu.flag_c_arch.read()
                   << " Z=" << cpu.flag_z_arch.read()
                   << ", stalls=" << cpu.stalls_totales
+                  << ", branches=" << cpu.branches_tomados
                   << ", escrituras=" << cpu.escrituras.size() << "\n";
         comprobar("C. exactamente 1 stall", cpu.stalls_totales == 1, "");
-        comprobar("C. 3 escrituras RF (CMP no escribe)", cpu.escrituras.size() == 3, "");
+        comprobar("C. 3 escrituras RF (CMP y LDI anulada no escriben)",
+                  cpu.escrituras.size() == 3, "");
         comprobar("C. banderas finales C=1 Z=1",
                   cpu.flag_c_arch.read() && cpu.flag_z_arch.read(), "");
+        comprobar("C. branch tomado con 1 flush", cpu.branches_tomados == 1, "");
         comprobar_congelacion(cpu, "C. PC/IFID congelados y burbuja");
 
         const auto* f = fila_ex(cpu, CMP);
@@ -392,7 +402,7 @@ int sc_main(int argc, char* argv[])
                       << " salto=" << j->ctrl_salto << "\n";
         bool ev_jeq = j && j->flag_src.to_uint() == CPU_Goalkeeper::FLAG_EX &&
                       j->flag_c_fwd && j->flag_z_fwd && j->ctrl_salto;
-        comprobar("C. JEQ ve C/Z del CMP en EX (sin resolver PC)", ev_jeq, "");
+        comprobar("C. JEQ ve C/Z del CMP en EX (con branch funcional)", ev_jeq, "");
     }
 
     // =====================================================
@@ -429,6 +439,7 @@ int sc_main(int argc, char* argv[])
     // =====================================================
     {
         monitor_out.escrituras.clear();
+        monitor_out.pulsos = 0;
         auto p = base();
         p.push_back(formato_i(LD, 1, 0x10));
         p.push_back(formato_i(OUT, 1, 0x30));
@@ -438,10 +449,10 @@ int sc_main(int argc, char* argv[])
                               monitor_out.escrituras[0x30] : -1;
         std::cout << "Resultado: puerto 0x30=" << puerto
                   << " (esperado 5), stalls=" << cpu.stalls_totales
-                  << ", pulsos OUT=" << monitor_out.escrituras.size() << "\n";
+                  << ", pulsos OUT=" << monitor_out.pulsos << "\n";
         comprobar("E. puerto 0x30=5", puerto == 5, "");
         comprobar("E. exactamente 1 stall", cpu.stalls_totales == 1, "");
-        comprobar("E. un unico efecto OUT", monitor_out.escrituras.size() == 1, "");
+        comprobar("E. exactamente un pulso OUT", monitor_out.pulsos == 1, "");
         comprobar("E. 3 escrituras RF (OUT no escribe)", cpu.escrituras.size() == 3, "");
         comprobar_congelacion(cpu, "E. PC/IFID congelados y burbuja");
 

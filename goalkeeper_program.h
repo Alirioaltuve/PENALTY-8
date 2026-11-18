@@ -3,27 +3,24 @@
 
 #include <systemc.h>
 #include <vector>
+#include <string>
+#include <map>
+#include <utility>
 #include "isa.h"
 
 // ============================================================
 // Programa de GOALKEEPER-8
-// Construye el programa que ejecuta el portero. La logica del
-// portero vive aqui (en forma de instrucciones), NO dentro de la
-// Unidad de Control ni de la ALU.
 //
-// Estrategia del portero:
-//   - Se queda esperando a que REQ (0x15) se active.
-//   - Lee los cinco bytes del disparo (0x10..0x14).
-//   - Guarda el shot_id en memoria de datos (0x00).
-//   - dive_x = target_x, dive_y = target_y.
-//   - reach_x = reach_y = 64 (alcance fijo).
-//   - Realiza operaciones aritmeticas y de comparacion de ejemplo.
-//   - Escribe la respuesta en 0x20..0x25.
-//   - Activa ACK escribiendo en 0x16.
-//   - Espera a que REQ baje y vuelve a empezar.
+// Estrategia determinista, solo con instrucciones de la ISA:
+//   - dive_x = target_x + 16 si shot_id es impar; target_x - 16 si par.
+//   - dive_y = target_y + 16 si flight_ticks < 128; target_y si >= 128.
+//   - reach  = 16 + 8 si power >= 128 - 8 si flight_ticks < 128.
+//   - reach_x = reach_y = reach.
+//   - shot_id se conserva en memoria de datos y se devuelve como eco.
+//   - reaction_ticks y ACK los gestiona el CommunicationMailbox.
 //
-// reaction_ticks (0x23) lo sobrescribe el CommunicationMailbox con
-// el tiempo medido real; el programa solo escribe un marcador.
+// Coordenadas validas de porteria: target_x/y en [32,223]; el sesgo
+// de +-16 no desborda el byte en ese rango.
 // ============================================================
 
 namespace goalkeeper_program
@@ -47,81 +44,113 @@ const unsigned int IO_REACH_Y   = 0x25;
 
 // Direcciones internas de memoria de datos
 const unsigned int MEM_ID       = 0x00;
-const unsigned int MEM_SUMA     = 0x01;
-
-// Etiquetas (indices absolutos de instruccion)
-enum Etiquetas
-{
-    L_INICIO       = 0,
-    L_ESPERAR      = 1,
-    L_SALTAR       = 19,
-    L_ESPERAR_BAJO = 27
-};
 
 inline std::vector<sc_uint<16>> construir()
 {
     using namespace isa;
+
     std::vector<sc_uint<16>> p;
+    std::map<std::string, int> etiquetas;
+    std::vector<std::pair<int, std::string>> parches;
+
+    auto marcar = [&](const std::string& nombre) {
+        etiquetas[nombre] = (int)p.size();
+    };
+
+    auto emitir = [&](sc_uint<16> instr) {
+        p.push_back(instr);
+    };
+
+    auto saltar = [&](Opcode op, const std::string& destino) {
+        int idx = (int)p.size();
+        p.push_back(formato_j(op, 0));
+        parches.push_back(std::make_pair(idx, destino));
+    };
 
     // 0: R7 = 0 (registro cero del programa)
-    p.push_back(formato_i(LDI, 7, 0));
+    emitir(formato_i(LDI, 7, 0));
 
     // 1: esperar: R0 = REQ
-    p.push_back(formato_i(IN, 0, IO_REQ));
-    // 2: CMP R0, R7  (R0 - 0)
-    p.push_back(formato_r(CMP, 0, 0, 7));
-    // 3: JEQ esperar  (mientras REQ == 0)
-    p.push_back(formato_j(JEQ, L_ESPERAR));
+    marcar("INICIO");
+    emitir(formato_i(IN, 0, IO_REQ));
+    // 2: CMP R0, R7
+    emitir(formato_r(CMP, 0, 0, 7));
+    // 3: JEQ esperar
+    saltar(JEQ, "INICIO");
 
-    // 4-8: leer los cinco bytes del disparo
-    p.push_back(formato_i(IN, 0, IO_ID));       // 4  R0 = shot_id
-    p.push_back(formato_i(IN, 1, IO_TARGET_X)); // 5  R1 = target_x
-    p.push_back(formato_i(IN, 2, IO_TARGET_Y)); // 6  R2 = target_y
-    p.push_back(formato_i(IN, 3, IO_POWER));    // 7  R3 = power
-    p.push_back(formato_i(IN, 4, IO_FLIGHT));   // 8  R4 = flight_ticks
+    // 4-8: leer los cinco bytes de la solicitud
+    emitir(formato_i(IN, 0, IO_ID));
+    emitir(formato_i(IN, 1, IO_TARGET_X));
+    emitir(formato_i(IN, 2, IO_TARGET_Y));
+    emitir(formato_i(IN, 3, IO_POWER));
+    emitir(formato_i(IN, 4, IO_FLIGHT));
 
     // 9: guardar shot_id en memoria de datos
-    p.push_back(formato_i(ST, 0, MEM_ID));      // 9  mem[0] = R0
+    emitir(formato_i(ST, 0, MEM_ID));
 
-    // 10-11: dive = target
-    p.push_back(formato_r(MOV, 5, 1, 0));       // 10 R5 = R1 (dive_x)
-    p.push_back(formato_r(MOV, 6, 2, 0));       // 11 R6 = R2 (dive_y)
+    // 10-18: dive_x = target_x + 16 (id impar) / target_x - 16 (id par)
+    emitir(formato_i(LDI, 5, 1));
+    emitir(formato_r(AND, 0, 0, 5));      // R0 = shot_id & 1
+    emitir(formato_r(CMP, 0, 0, 7));
+    saltar(JEQ, "DX_PAR");
+    emitir(formato_i(LDI, 5, 16));
+    emitir(formato_r(ADD, 5, 1, 5));      // R5 = target_x + 16
+    saltar(JMP, "DX_FIN");
+    marcar("DX_PAR");
+    emitir(formato_i(LDI, 5, 16));
+    emitir(formato_r(SUB, 5, 1, 5));      // R5 = target_x - 16
+    marcar("DX_FIN");
 
-    // 12-13: alcance fijo
-    p.push_back(formato_i(LDI, 3, 64));         // 12 R3 = 64 (reach_x)
-    p.push_back(formato_i(LDI, 4, 64));         // 13 R4 = 64 (reach_y)
+    // 19-25: dive_y = target_y + 16 si flight < 128; si no target_y
+    emitir(formato_i(LDI, 0, 128));
+    emitir(formato_r(CMP, 0, 4, 0));      // flight vs 128
+    saltar(JGE, "DY_LENTO");
+    emitir(formato_i(LDI, 6, 16));
+    emitir(formato_r(ADD, 6, 2, 6));      // R6 = target_y + 16
+    saltar(JMP, "DY_FIN");
+    marcar("DY_LENTO");
+    emitir(formato_r(MOV, 6, 2, 0));      // R6 = target_y
+    marcar("DY_FIN");
 
-    // 14: operacion aritmetica de ejemplo
-    p.push_back(formato_r(ADD, 0, 1, 2));       // 14 R0 = R1 + R2
-    // 15: escritura de ejemplo en memoria de datos
-    p.push_back(formato_i(ST, 0, MEM_SUMA));    // 15 mem[1] = R0
+    // 26-37: reach = 16; +8 si power >= 128; -8 si flight < 128
+    emitir(formato_i(LDI, 0, 16));        // R0 = reach
+    emitir(formato_i(LDI, 7, 128));
+    emitir(formato_r(CMP, 0, 3, 7));      // power vs 128
+    saltar(JLT, "POW_BAJO");
+    emitir(formato_i(LDI, 7, 8));
+    emitir(formato_r(ADD, 0, 0, 7));      // reach += 8
+    marcar("POW_BAJO");
+    emitir(formato_i(LDI, 7, 128));
+    emitir(formato_r(CMP, 0, 4, 7));      // flight vs 128
+    saltar(JGE, "FLIGHT_OK");
+    emitir(formato_i(LDI, 7, 8));
+    emitir(formato_r(SUB, 0, 0, 7));      // reach -= 8
+    marcar("FLIGHT_OK");
+    emitir(formato_i(LDI, 7, 0));         // restaurar cero
 
-    // 16-18: comparacion y salto condicional de ejemplo
-    p.push_back(formato_r(CMP, 0, 0, 7));       // 16 CMP R0, R7
-    p.push_back(formato_j(JGE, L_SALTAR));      // 17 JGE saltar
-    p.push_back(formato_i(LDI, 0, 0xFF));       // 18 (se omite si salta)
+    // 38-45: respuesta por OUT (el mailbox completa reaction/ACK)
+    emitir(formato_i(OUT, 0, IO_REACH_X));
+    emitir(formato_i(OUT, 0, IO_REACH_Y));
+    emitir(formato_i(LD, 0, MEM_ID));     // shot_id
+    emitir(formato_i(OUT, 0, IO_OUT_ID));
+    emitir(formato_i(OUT, 5, IO_DIVE_X));
+    emitir(formato_i(OUT, 6, IO_DIVE_Y));
+    emitir(formato_i(OUT, 7, IO_REACTION)); // marcador; mailbox lo ignora
+    emitir(formato_i(OUT, 7, IO_ACK));      // evento ACK
 
-    // 19: saltar: recuperar shot_id de memoria
-    p.push_back(formato_i(LD, 0, MEM_ID));      // 19 R0 = mem[0]
+    // 46-49: esperar a que REQ baje y volver al inicio
+    marcar("ESPERAR_BAJO");
+    emitir(formato_i(IN, 0, IO_REQ));
+    emitir(formato_r(CMP, 0, 0, 7));
+    saltar(JNE, "ESPERAR_BAJO");
+    saltar(JMP, "INICIO");
 
-    // 20-26: escribir la respuesta
-    p.push_back(formato_i(OUT, 0, IO_OUT_ID));  // 20 shot_id
-    p.push_back(formato_i(OUT, 5, IO_DIVE_X));  // 21 dive_x
-    p.push_back(formato_i(OUT, 6, IO_DIVE_Y));  // 22 dive_y
-    p.push_back(formato_i(OUT, 7, IO_REACTION));// 23 reaction (lo sobrescribe mailbox)
-    p.push_back(formato_i(OUT, 3, IO_REACH_X)); // 24 reach_x
-    p.push_back(formato_i(OUT, 4, IO_REACH_Y)); // 25 reach_y
-    p.push_back(formato_i(OUT, 7, IO_ACK));     // 26 ACK (evento de escritura)
-
-    // 27: esperar_bajo: R0 = REQ
-    p.push_back(formato_i(IN, 0, IO_REQ));
-    // 28: CMP R0, R7
-    p.push_back(formato_r(CMP, 0, 0, 7));
-    // 29: JNE esperar_bajo  (mientras REQ != 0)
-    p.push_back(formato_j(JNE, L_ESPERAR_BAJO));
-
-    // 30: volver al inicio
-    p.push_back(formato_j(JMP, L_INICIO));
+    // Resolver destinos de los saltos con las etiquetas reales.
+    for (const auto& par : parches)
+    {
+        int destino = etiquetas.at(par.second);
+        p[par.first].range(10, 3) = destino & 0xFF;
+    }
 
     return p;
 }

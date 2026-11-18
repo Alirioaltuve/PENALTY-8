@@ -42,6 +42,15 @@ GOALKEEPER escribe / STRIKER lee:
 - Respuesta: 6 bytes (shot_id, dive_x, dive_y, reaction_ticks, reach_x,
   reach_y).
 
+### 6.1 Independencia de `power` y `flight_ticks`
+
+`power` y `flight_ticks` son dos campos independientes del protocolo. No se
+deriva `flight_ticks` de `power` ni se rechazan combinaciones por la fórmula
+`flight_ticks = 256 - power`; esa fórmula pertenecía a una propuesta inicial y no
+forma parte de este contrato. GOALKEEPER usa `power` para decidir el alcance y
+`flight_ticks` para el sesgo vertical, el ajuste de alcance y el tiempo de
+reacción del Árbitro, sin imponer una relación entre ambos.
+
 ## 7. Secuencia REQ/ACK
 1. STRIKER escribe los datos.
 2. STRIKER activa REQ (0x15=1).
@@ -79,6 +88,7 @@ STRIKER: lee 0x16=1, 0x20..0x25, luego 0x15=0
 
 ## 14. Decisiones de diseño
 - Se adoptó la propuesta de referencia del enunciado.
+- `power` y `flight_ticks` son independientes; no se valida `flight = 256 - power`.
 - **Riesgo/conflicto:** no se dispone del código del STRIKER-8 de Rafael, por lo
   que este mapa debe confirmarse antes de la integración real. Si su mapa o
   formato difieren, el cambio se concentra en `communication_mailbox.h` y en el

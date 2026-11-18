@@ -28,6 +28,11 @@ set(TESTBENCHES
     test_pipeline
     test_forwarding
     test_hazard
+    test_branch
+    test_communication
+    test_cpu_io
+    test_goalkeeper_strategy
+    test_fase6
     test_arbitro
     testbench_integracion
 )
@@ -51,5 +56,10 @@ add_test(NAME cpu_goalkeeper             COMMAND test_cpu_goalkeeper)
 add_test(NAME pipeline                   COMMAND test_pipeline)
 add_test(NAME forwarding                 COMMAND test_forwarding)
 add_test(NAME hazard                     COMMAND test_hazard)
+add_test(NAME branch                     COMMAND test_branch)
+add_test(NAME communication              COMMAND test_communication)
+add_test(NAME cpu_io                     COMMAND test_cpu_io)
+add_test(NAME goalkeeper_strategy        COMMAND test_goalkeeper_strategy)
+add_test(NAME fase6                      COMMAND test_fase6)
 add_test(NAME arbitro                    COMMAND test_arbitro)
 add_test(NAME integracion                COMMAND testbench_integracion)

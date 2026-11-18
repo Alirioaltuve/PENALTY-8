@@ -1,5 +1,9 @@
 # Informe Final §13 - PENALTY-8: GOALKEEPER-8 Pipeline Implementation
 
+> Nota: este informe documenta la implementación del pipeline. La estrategia del
+> portero y los tiempos de la integración se actualizaron en la Fase 5B; para el
+> estado vigente ver `docs/programa_goalkeeper.md` y `README.md`.
+
 ## 1. Arquitectura anterior
 
 La arquitectura original de GOALKEEPER-8 era **single-cycle** (una instrucción por ciclo), donde todas las etapas del camino de datos (fetch, decode, execute, memory access, writeback) operaban en el mismo ciclo de reloj. Los módulos principales ya estaban implementados pero sin pipeline:
@@ -35,11 +39,11 @@ La arquitectura original de GOALKEEPER-8 era **single-cycle** (una instrucción 
 - **memoria_datos.h**: Sin modificaciones
 - **unidad_control.h**: Sin modificaciones; su salida de señales de control fluye ahora hacia los registros pipeline
 - **registro_banderas.h**: Sin modificaciones; conserva su lógica de actualización selectiva
-- **communication_mailbox.h**: Sin modificaciones
+- **communication_mailbox.h**: Protocolo y guardas actualizados en la Fase 5; ver `docs/communication_mailbox.md`.
 - **arbitro.h**: Sin modificaciones
 - **striker_sim.h**: Sin modificaciones; sigue identificándose como simulador de protocolo
 - **isa.h**: Sin modificaciones; la ISA permanece intacta
-- **goalkeeper_program.h**: Sin modificaciones
+- **goalkeeper_program.h**: Estrategia actualizada en la Fase 5B; ver `docs/programa_goalkeeper.md`.
 
 ## 6. Cómo se implementaron las cinco etapas
 
@@ -89,11 +93,11 @@ Implementado desde EX/MEM y MEM/WB hacia la etapa EX para manejar dependencias d
 
 | Categoría | Resultado |
 |-----------|-----------|
-| 10/10 pruebas ctest | Pasadas |
-| Pruebas unitarias individuales | 10/10 pasadas |
+| 17/17 pruebas ctest | Pasadas |
+| Pruebas unitarias individuales | 17/17 pasadas |
 | Pipeline funcional | Instrucciones se superponen correctamente |
 | Integración (4 disparos) | SAVE, GOAL (tardío), MISS, SAVE (0 fallos) |
-| Tiempos de reacción | 25-27 ciclos |
+| Tiempos de reacción | 40-44 ciclos |
 
 ## 13. Limitaciones pendientes
 
@@ -121,9 +125,9 @@ ctest --output-on-failure
 ./testbench_integracion
 
 # Ver resultados esperados:
-# [OK]   Disparo 1 esperado=SAVE obtenido=2 resp_id=1 reaction=25
-# [OK]   Disparo 2 esperado=GOAL(tarde) obtenido=1 resp_id=2 reaction=27
-# [OK]   Disparo 3 esperado=MISS(fuera) obtenido=0 resp_id=3 reaction=27
-# [OK]   Disparo 4 esperado=SAVE obtenido=2 resp_id=4 reaction=27
+# [OK]   Disparo 1 esperado=SAVE obtenido=2 resp_id=1 reaction=43
+# [OK]   Disparo 2 esperado=GOAL(tarde) obtenido=1 resp_id=2 reaction=44
+# [OK]   Disparo 3 esperado=MISS(fuera) obtenido=0 resp_id=3 reaction=41
+# [OK]   Disparo 4 esperado=SAVE obtenido=2 resp_id=4 reaction=40
 # Fallos: 0
 ```

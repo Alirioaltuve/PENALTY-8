@@ -48,6 +48,13 @@ SC_MODULE(CPU_Goalkeeper)
     // Congelacion del frente del pipeline por hazard load-use
     sc_signal<bool> stall;
 
+    // Control de branches, flush y HALT (combinacional/registrado)
+    sc_signal<bool> halt_ahora;
+    sc_signal<bool> halt_stop;
+    sc_signal<bool> halted_reg;
+    sc_signal<bool> pc_freeze;
+    sc_signal<bool> branch_taken;
+
     // Origen seleccionado para un operando de EX
     enum { FWD_NINGUNO = 0, FWD_EXMEM = 1, FWD_MEMWB = 2 };
 
@@ -104,10 +111,6 @@ SC_MODULE(CPU_Goalkeeper)
     sc_signal<bool> wb_enable;
     sc_signal<bool> wb_flags_enable;
     sc_signal<bool> mem_write_enable;
-
-    // El PC no se salta en esta fase (flush de saltos pendiente).
-    sc_signal<bool> nunca_salto;
-    sc_signal<sc_uint<8>> dir_ignorada;
 
     // ---------- Pipeline IF/ID ----------
     sc_signal<bool> ifid_valid;
@@ -203,6 +206,15 @@ SC_MODULE(CPU_Goalkeeper)
 
         // Evidencia de hazard/stall
         bool stall;
+
+        // Evidencia de branch/flush/HALT
+        bool branch_taken;
+        bool flush;
+        bool halt_ahora;
+        bool halt_stop;
+        bool halted_reg;
+        bool pc_freeze;
+        sc_uint<8> ctrl_dir_salto;
     };
 
     struct EventoEscritura
@@ -217,12 +229,18 @@ SC_MODULE(CPU_Goalkeeper)
     bool trazando;
     int ciclo_traza;
     int stalls_totales;
+    int flushes_totales;
+    int branches_tomados;
+    int halts_detectados;
 
     void iniciar_traza()
     {
         traza.clear();
         ciclo_traza = 1;
         stalls_totales = 0;
+        flushes_totales = 0;
+        branches_tomados = 0;
+        halts_detectados = 0;
         trazando = true;
     }
 
@@ -231,6 +249,13 @@ SC_MODULE(CPU_Goalkeeper)
     void limpiar_eventos() { escrituras.clear(); }
 
     void limpiar_stalls() { stalls_totales = 0; }
+
+    void limpiar_control()
+    {
+        flushes_totales = 0;
+        branches_tomados = 0;
+        halts_detectados = 0;
+    }
 
     sc_uint<8> valor_registro(int i) { return regs.registros[i & 0x7].read(); }
 
@@ -452,6 +477,17 @@ SC_MODULE(CPU_Goalkeeper)
         stall.write(hazard);
     }
 
+    // -------------------- Control combinacional del PC -
+    void control_pc()
+    {
+        bool hv = ifid_valid.read() && ctrl_halt.read() && !halt_stop.read();
+        bool freeze = stall.read() || hv || halt_stop.read();
+
+        halt_ahora.write(hv);
+        pc_freeze.write(freeze);
+        branch_taken.write(ifid_valid.read() && ctrl_salto.read() && !freeze);
+    }
+
     // -------------------- Salidas de E/S y HALT --------
     void salidas()
     {
@@ -469,9 +505,8 @@ SC_MODULE(CPU_Goalkeeper)
 
         io_wdata.write(ex_a.read());
 
-        bool h = memwb_valid.read() &&
-                 (memwb_instr.read().range(15, 11).to_uint() == isa::HALT);
-        halted.write(h);
+        // Estado sticky de HALT; permanece activo hasta reset.
+        halted.write(halted_reg.read());
     }
 
     // -------------------- Proceso secuencial -----------
@@ -483,9 +518,24 @@ SC_MODULE(CPU_Goalkeeper)
     {
         bool rst = reset.read();
         bool stall_actual = stall.read();
+        bool halt_ahora_old = halt_ahora.read();
+        bool halt_stop_old = halt_stop.read();
+        bool branch_taken_old = branch_taken.read();
+        bool pc_freeze_old = pc_freeze.read();
 
         if (!rst && stall_actual)
             stalls_totales++;
+
+        if (!rst && branch_taken_old)
+        {
+            flushes_totales++;
+            branches_tomados++;
+        }
+        if (!rst && halt_ahora_old)
+        {
+            flushes_totales++;
+            halts_detectados++;
+        }
 
         // --- Estado previo (ciclo que termina) ---
         bool v_ifid = ifid_valid.read();
@@ -608,6 +658,14 @@ SC_MODULE(CPU_Goalkeeper)
             t.flag_src = flag_src_old;
             t.ctrl_salto = ctrl_salto_old;
             t.stall = stall_actual;
+
+            t.branch_taken = branch_taken_old;
+            t.flush = branch_taken_old || halt_ahora_old;
+            t.halt_ahora = halt_ahora_old;
+            t.halt_stop = halt_stop_old;
+            t.halted_reg = halted_reg.read();
+            t.pc_freeze = pc_freeze_old;
+            t.ctrl_dir_salto = ctrl_dir_salto.read();
             traza.push_back(t);
         }
 
@@ -675,24 +733,41 @@ SC_MODULE(CPU_Goalkeeper)
             memwb_write_flags.write(false);
             memwb_flag_c.write(false);
             memwb_flag_z.write(false);
+
+            halt_stop.write(false);
+            halted_reg.write(false);
             return;
         }
 
-        if (stall_actual)
+        bool halt_detectado = halt_ahora_old;
+        bool stop_previo = halt_stop_old;
+
+        // --- IF -> IF/ID ---
+        if (stop_previo || halt_detectado || branch_taken_old)
         {
-            // Congelar IF/ID: el consumidor permanece en ID.
-            // Insertar una burbuja en ID/EX. EX/MEM y MEM/WB siguen
-            // avanzando con el estado previo.
+            // Flush/parada: no capturar la instruccion secuencial.
+            ifid_valid.write(false);
+            ifid_instr.write(0);
+            ifid_pc.write(0);
+        }
+        else if (stall_actual && !halt_detectado)
+        {
+            // Congelar IF/ID por load-use; el consumidor permanece en ID.
+        }
+        else
+        {
+            ifid_valid.write(true);
+            ifid_instr.write(instr_fetch);
+            ifid_pc.write(pc_actual);
+        }
+
+        // --- ID -> ID/EX ---
+        if (stop_previo || (stall_actual && !halt_detectado))
+        {
             burbuja_idex();
         }
         else
         {
-            // --- IF -> IF/ID ---
-            ifid_valid.write(true);
-            ifid_instr.write(instr_fetch);
-            ifid_pc.write(pc_actual);
-
-            // --- ID -> ID/EX (decodifica IF/ID previo) ---
             if (v_ifid)
             {
                 unsigned int op_id = instr_ifid.range(15, 11).to_uint();
@@ -737,6 +812,13 @@ SC_MODULE(CPU_Goalkeeper)
                 burbuja_idex();
             }
         }
+
+        if (halt_detectado)
+            halt_stop.write(true);
+
+        // HALT llega a WB tras drenar las anteriores: estado sticky.
+        if (v_memwb && (instr_memwb.range(15, 11).to_uint() == isa::HALT))
+            halted_reg.write(true);
 
         // --- EX -> EX/MEM (usa ALU de ID/EX previo) ---
         if (v_idex)
@@ -816,16 +898,16 @@ SC_MODULE(CPU_Goalkeeper)
         trazando = false;
         ciclo_traza = 1;
         stalls_totales = 0;
-
-        nunca_salto.write(false);
-        dir_ignorada.write(0);
+        flushes_totales = 0;
+        branches_tomados = 0;
+        halts_detectados = 0;
 
         // ---------------- PC ----------------
         pc.clk(clk);
         pc.reset(reset);
-        pc.stall(stall);
-        pc.salto(nunca_salto);
-        pc.direccion_salto(dir_ignorada);
+        pc.stall(pc_freeze);
+        pc.salto(branch_taken);
+        pc.direccion_salto(ctrl_dir_salto);
         pc.direccion_actual(pc_addr);
 
         // ---------------- Memoria de instrucciones ----
@@ -916,6 +998,10 @@ SC_MODULE(CPU_Goalkeeper)
                   << ifid_valid << ifid_instr
                   << ctrl_reg_a_sel << ctrl_reg_b_sel;
 
+        SC_METHOD(control_pc);
+        sensitive << ifid_valid << ctrl_salto << ctrl_halt
+                  << stall << halt_stop;
+
         SC_METHOD(comb_flags);
         sensitive << idex_valid << idex_write_flags
                   << alu_carry << alu_zero
@@ -933,8 +1019,7 @@ SC_MODULE(CPU_Goalkeeper)
 
         SC_METHOD(salidas);
         sensitive << idex_valid << idex_io_write << idex_io_read
-                  << idex_io_addr << ex_a
-                  << memwb_valid << memwb_instr;
+                  << idex_io_addr << ex_a << halted_reg;
     }
 };
 
