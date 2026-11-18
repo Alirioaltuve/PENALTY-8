@@ -2,76 +2,78 @@
 
 Proyecto universitario de Arquitectura del Computador (C++ + SystemC).
 
-4. Pipeline totalmente implementado y funcional.
-4. Pipeline totalmente implementado y funcional.
 PENALTY-8 está formado por dos computadores RISC de 8 bits:
-4. Pipeline totalmente implementado y funcional.
-5. No se implementa la bandera `V`.
-6. La interfaz gráfica (SFML) no forma parte de esta etapa.
 
 - **STRIKER-8**: calcula y ejecuta los disparos. *Desarrollado por Rafael.*
 - **GOALKEEPER-8**: analiza el disparo, decide su reacción y responde.
 
-Este repositorio contiene **GOALKEEPER-8 completo**, la **comunicación**
-(`CommunicationMailbox`) y el **árbitro**, además de un **simulador del lado
-STRIKER** (`StrikerSim`) para validar el protocolo mientras el STRIKER real no
-está disponible.
+Este repositorio contiene **GOALKEEPER-8 completo** (un computador RISC
+pipeline de cinco etapas, programable), la **comunicación**
+(`CommunicationMailbox`), el **árbitro**, un **simulador del lado STRIKER**
+(`StrikerSim`) y dos ejecutables:
+
+- **`demo_goalkeeper`**: demostración interactiva del sistema de penaltis.
+- **`eval_goalkeeper`**: evaluador que ensambla y ejecuta programas RISC
+  independientes (escritos en ensamblador `.asm`) en la CPU real.
 
 > **Aviso importante:** no existe código del STRIKER-8 de Rafael en este
 > repositorio. La integración documentada aquí es con un simulador de protocolo,
-> no con el STRIKER real. Ver `docs/cpu_striker.md`.
+> no con el STRIKER real. Ver `docs/cpu_striker.md` y
+> `docs/guia_integracion_striker.md`.
 
 ---
 
 ## Arquitectura
 
-| Característica      | Especificación              |
-|---------------------|-----------------------------|
-| Arquitectura        | RISC                        |
-| Ancho de datos      | 8 bits                      |
-| Registros           | 8 (R0–R7)                   |
-| Ancho de PC         | 8 bits                      |
-| Ancho de instrucción| 16 bits                     |
+| Característica | Especificación |
+|---|---|
+| Arquitectura | RISC |
+| Ancho de datos | 8 bits |
+| Registros | 8 (R0–R7) |
+| Ancho de PC | 8 bits |
+| Ancho de instrucción | 16 bits (20 instrucciones, formatos R/I/J) |
 | Memoria de instrucciones | 256 palabras de 16 bits |
-| Memoria de datos    | 256 bytes                   |
-| ALU                 | 8 bits                      |
-| Reloj               | 10 ns / 100 MHz             |
-| Ejecución           | Pipeline RISC de 5 etapas     |
-| Pipeline            | Pipeline RISC de 5 etapas     |
-| Reset               | Síncrono, activo en alto    |
+| Memoria de datos | 256 bytes |
+| ALU | ADD, SUB, AND, OR, CMP (banderas C y Z) |
+| Ejecución | Pipeline RISC de 5 etapas (IF-ID-EX-MEM-WB) |
+| Extras | forwarding, hazard detection, stalls, branches, flush, HALT |
+| Reset | Síncrono, activo en alto |
 
-ISA y formatos: ver `docs/isa.md`.
+Detalles: `docs/arquitectura_goalkeeper.md` e `inventario_tecnico.md`.
 
 ---
 
-## Estructura de carpetas
+## Estructura
 
 ```
 .
-├── isa.h                      Definición de ISA y helpers
-├── banco_registros.h          Registro de 8 x 8 bits
+├── isa.h                      ISA y helpers de codificación
+├── banco_registros.h          Banco de 8 × 8 bits
 ├── alu.h                      Unidad aritmético-lógica
 ├── pc.h                       Contador de programa
-├── memoria_instrucciones.h    Memoria de programa (256 x 16)
-├── memoria_datos.h            Memoria de datos (256 x 8)
+├── memoria_instrucciones.h    Memoria de programa (256 × 16)
+├── memoria_datos.h            Memoria de datos (256 × 8)
 ├── unidad_control.h           Decodificador combinacional
 ├── registro_banderas.h        Registro de banderas C/Z
-├── cpu_goalkeeper.h           CPU completa
+├── cpu_goalkeeper.h           CPU completa (pipeline)
 ├── communication_mailbox.h    Canal REQ/ACK + temporizador
 ├── arbitro.h                  Reglas MISS/GOAL/SAVE
 ├── goalkeeper_program.h       Programa del portero
 ├── striker_sim.h              Simulador del lado STRIKER (protocolo)
-├── testbench*.cpp             Pruebas (cada una con sc_main)
-├── test_*.cpp                 Pruebas unitarias/de integración
+├── assembler.h                Ensamblador de programas .asm
+├── demo_goalkeeper.cpp        Demostración interactiva de penaltis
+├── eval_goalkeeper.cpp        Evaluador de programas independientes
+├── testbench*.cpp / test_*.cpp  Pruebas (cada una con su sc_main)
+├── examples/                  13 programas .asm de ejemplo
 ├── CMakeLists.txt
-└── docs/                      Documentación por módulo
+└── docs/                      Documentación
 ```
 
 ---
 
 ## Cómo compilar
 
-Requisitos: `cmake`, `g++`, `SystemC` (`pkg-config --exists systemc`).
+Requisitos: `cmake`, `g++` (C++17) y `SystemC` 2.3.x (`pkg-config --exists systemc`).
 
 ```bash
 mkdir -p build
@@ -80,6 +82,62 @@ cmake ..
 make -j4
 ```
 
+Se generan todos los ejecutables, incluidos `demo_goalkeeper` y
+`eval_goalkeeper`.
+
+---
+
+## Cómo ejecutar la demostración de penaltis
+
+```bash
+./build/demo_goalkeeper
+```
+
+Muestra un menú interactivo (disparo de prueba, disparo personalizado, secuencia
+automática, estadísticas, información técnica). Ejecuta la CPU, el Mailbox y el
+Árbitro reales; el lado STRIKER se emula. Texto plano: `NO_COLOR=1`.
+
+Guía completa: `docs/GUIA_DEMO_PENALTIS.md`.
+
+---
+
+## Cómo ejecutar programas RISC independientes
+
+`eval_goalkeeper` ensambla un archivo `.asm` y lo ejecuta en la CPU real:
+
+```bash
+./build/eval_goalkeeper examples/suma.asm
+```
+
+Opciones:
+
+```bash
+./build/eval_goalkeeper examples/bucle.asm --max-ciclos 1000 --mem 16
+```
+
+- `--max-ciclos N`: límite de ciclos (detecta bucles infinitos).
+- `--mem N`: cuántas posiciones de memoria de datos mostrar.
+
+Escribe tu propio programa (máximo 256 instrucciones):
+
+```asm
+; mi_suma.asm
+LDI R1, 7
+LDI R2, 8
+ADD R3, R1, R2
+HALT
+```
+
+```bash
+./build/eval_goalkeeper mi_suma.asm
+```
+
+Resultado esperado: `Estado final: HALT` y `R3 = 15`.
+
+Guías completas: `docs/GUIA_EJECUCION_PROGRAMAS.md` y `docs/evaluacion.md`.
+
+---
+
 ## Cómo ejecutar las pruebas
 
 ```bash
@@ -87,119 +145,48 @@ cd build
 ctest --output-on-failure
 ```
 
-Para ejecutar una prueba concreta:
-
-```bash
-./build/testbench_integracion
-./build/test_cpu_goalkeeper
-```
-
-También se puede compilar un archivo suelto:
-
-```bash
-g++ -std=c++17 -I/usr/include testbench_integracion.cpp -lsystemc -o sim
-./sim
-```
+Resultado esperado: `100% tests passed` (21 pruebas). Incluyen módulos,
+pipeline, forwarding, hazards, branches, comunicación, E/S, estrategia, Fase 6,
+ensamblador, núcleo adicional y aceptación.
 
 ---
 
-## Cómo funciona GOALKEEPER-8
+## Cómo se comunican (protocolo REQ/ACK)
 
-1. El **PC** entrega la dirección.
-2. La **memoria de instrucciones** entrega la instrucción de 16 bits.
-3. La **Unidad de Control** la decodifica y genera las señales.
-4. El **banco de registros** entrega los operandos.
-5. La **ALU** calcula y produce banderas.
-6. El **registro de banderas** las guarda solo cuando corresponde.
-7. La **memoria de datos** o la **E/S** se actualizan si la instrucción lo pide.
-8. El **PC** avanza o salta.
+Mediante `CommunicationMailbox`:
 
-El **programa del portero** (`goalkeeper_program.h`) implementa la lógica:
-espera REQ, lee el disparo, calcula la respuesta (dive/reach), la escribe y
-activa ACK. Reglas actuales:
+- STRIKER escribe el disparo en `0x10–0x14` y activa `REQ` en `0x15`.
+- GOALKEEPER lee, ejecuta y escribe la respuesta en `0x20–0x25` y `ACK` en `0x16`.
+- STRIKER lee la respuesta, baja `REQ` y espera `ACK=0`.
+- El tiempo de reacción (`reaction_ticks`) lo mide el Mailbox.
 
-- `dive_x = target_x + 16` si `shot_id` es impar; `target_x - 16` si es par.
-- `dive_y = target_y + 16` si `flight_ticks < 128`; `target_y` si es `>= 128`.
-- `reach = 16 + 8` si `power >= 128`, menos 8 si `flight_ticks < 128`;
-  `reach_x = reach_y = reach`.
-- `power` y `flight_ticks` son independientes; no se usa `flight = 256 - power`.
-
-## Cómo se comunican
-
-Mediante `CommunicationMailbox`, con un protocolo REQ/ACK:
-
-- STRIKER escribe el disparo (0x10–0x14) y activa REQ (0x15).
-- GOALKEEPER lee, ejecuta y escribe la respuesta (0x20–0x25) y ACK (0x16).
-- STRIKER lee la respuesta y baja REQ.
-- El tiempo de reacción se mide en el mailbox.
-
-Detalle completo en `docs/protocolo_comunicacion.md`.
-
----
-
-## Estado actual
-
-| Elemento                          | Estado                          |
-|-----------------------------------|---------------------------------|
-| Banco de registros                | Implementado, compilado, probado |
-| ALU                               | Implementado, compilado, probado |
-| PC                                | Implementado, compilado, probado |
-| Memoria de instrucciones          | Implementado, compilado, probado |
-| Memoria de datos                  | Implementado, compilado, probado |
-| Unidad de Control                 | Implementado, compilado, probado |
-| Registro de banderas              | Implementado, compilado, probado |
-| CPU GOALKEEPER                    | Implementado, compilado, probado |
-| Programa del portero              | Implementado, compilado, probado |
-| CommunicationMailbox              | Implementado, compilado, probado (con StrikerSim) |
-| Árbitro                           | Implementado, compilado, probado |
-| Integración GOALKEEPER+Mailbox    | Probada con StrikerSim          |
-| Integración con STRIKER-8 real    | **Pendiente** (no hay código)   |
-| Interfaz gráfica                  | **No iniciada** (fuera de alcance) |
+Contrato completo para conectar el STRIKER-8 real:
+`docs/contrato_integracion.md` y `docs/guia_integracion_striker.md`.
 
 ---
 
 ## Limitaciones conocidas
 
-1. **No hay STRIKER-8 real** en el repositorio: se usa `StrikerSim`. El mapa de
-   E/S y el protocolo deben confirmarse con Rafael.
-2. El portero usa una estrategia determinista con sesgo de `±16` en `dive_x`,
-   sesgo vertical según `flight_ticks` y `reach` de 8, 16 o 24. Está definida
-   para `target_x/y` en `[32,223]`; no incluye clamping para todo 0–255.
-3. El árbitro trata `power = 0` como tiro inválido (MISS), decisión documentada.
-5. No se implementa la bandera `V`.
+1. **No hay STRIKER-8 real** en el repositorio; se usa `StrikerSim` (simulador
+   de protocolo). El mapa de E/S debe confirmarse con Rafael.
+2. **`IN` sin dispositivo externo:** el evaluador fija el bus de entrada a 0,
+   por lo que `IN` devuelve 0. `OUT` sí escribe de verdad en el bus (se observa).
+   Para entradas reales hay que conectar el `CommunicationMailbox`.
+3. La estrategia del portero está definida para `target_x/y ∈ [32,223]`; no
+   incluye clamping para todo 0–255.
+4. No se implementa la bandera `V` (overflow).
 
-## Documentación por módulo
+---
 
-Ver la carpeta `docs/`:
-`banco_registros.md`, `alu.md`, `pc.md`, `memoria_instrucciones.md`,
-`memoria_datos.md`, `unidad_control.md`, `registro_banderas.md`,
-`cpu_goalkeeper.md`, `communication_mailbox.md`, `arbitro.md`, `integracion.md`,
-`programa_goalkeeper.md`, `protocolo_comunicacion.md`, `isa.md`,
-`cpu_striker.md`.
+## Documentación
 
-## Arquitectura pipeline
-
-GOALKEEPER-8 implementa un pipeline RISC de cinco etapas que permite la superposición de instrucciones:
-
-- **ETAPA IF (Instruction Fetch)**: Obtiene la dirección desde el PC, lee la instrucción en memoria y calcula la dirección secuencial. El pipeline IF/ID captura la instrucción y el PC.
-
-- **ETAPA ID (Instruction Decode)**: Decodifica la instrucción mediante la Unidad de Control. Lee los registros del banco de registros y genera las señales de control necesarias. El pipeline ID/EX captura los operandos, el opcode, el inmediato y las señales de control.
-
-- **ETAPA EX (Execute)**: Ejecuta operaciones aritméticas y lógicas mediante la ALU. Resuelve las condiciones de salto y detecta hazards de datos. El pipeline EX/MEM captura el resultado de ALU, el registro destino y las banderas.
-
-- **ETAPA MEM (Memory Access)**: Accede a la memoria de datos para instrucciones LD y ST. Para las instrucciones que no acceden a memoria, pasa través sin efectos secundarios. El pipeline MEM/WB captura el dato de writeback.
-
-- **ETAPA WB (Write Back)**: Escribe resultados en el banco de registros cuando corresponde y actualiza las banderas C y Z. El pipeline MEM/WB decide si la escritura se realiza según el selector WB.
-
-### Registros intermedios del pipeline
-
-1. **IF/ID**: instrucción (16 bits), PC (8 bits), dirección secuencial siguiente (8 bits), válida.
-2. **ID/EX**: operandos A y B (8 bits cada uno), identificador de registro destino (3 bits), opcode (5 bits), inmediato (8 bits), opcode ALU (3 bits), B inmediato (1 bit), selector writeback (3 bits), escritura en memoria (1 bit), dirección memoria (8 bits), escritura E/S (2 bits), dirección E/S (8 bits), actualizar banderas (1 bit), salto (1 bit), dirección salto (8 bits), PC siguiente (8 bits), banderas C/Z, válida.
-3. **EX/MEM**: resultado ALU (8 bits), identificador de registro destino (3 bits), escritura en memoria (1 bit), dirección memoria (8 bits), datos para escritura (8 bits), banderas C/Z, válida.
-4. **MEM/WB**: selector writeback (3 bits), dato de writeback (8 bits), identificador de registro destino (3 bits), banderas C/Z, válida.
-
-### Forwarding y hazard detection
-
-El pipeline implementa forwarding desde EX/MEM y MEM/WB hacia la etapa EX para manejar dependencias de datos. También detecta hazards de load-use que requieren detener el pipeline temporalmente yinsertar burbujas. Los saltos y saltos condicionales provocan flush de las instrucciones incorrectas en el pipeline.
-
-Pruebas integradas: el pipeline ejecuta correctamente 4 disparos de penalti con resultados SAVE, GOAL (tardío), MISS y SAVE, con tiempos de reacción de 40–44 ciclos. `test_goalkeeper_strategy` cubre además 11 solicitudes, incluidas las fronteras de `power` y `flight_ticks` en 127/128/129 y la verificación de los registros reales que alimentan los `OUT`.
+- `docs/arquitectura_goalkeeper.md` — arquitectura y pipeline.
+- `docs/protocolo_comunicacion.md` — mapa de E/S y REQ/ACK.
+- `docs/contrato_integracion.md` — contrato STRIKER↔GOALKEEPER.
+- `docs/guia_integracion_striker.md` — cómo conectar STRIKER-8.
+- `docs/GUIA_DEMO_PENALTIS.md` — guía de la demostración de penaltis.
+- `docs/GUIA_EJECUCION_PROGRAMAS.md` — guía del evaluador de programas.
+- `docs/evaluacion.md` — referencia del evaluador.
+- `inventario_tecnico.md` — ficha técnica completa.
+- `docs/*.md` — documentación por módulo (ALU, PC, banco, memorias, UC, CPU,
+  Mailbox, árbitro, ISA, programa, integración, STRIKER).
