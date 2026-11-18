@@ -18,8 +18,7 @@ pipeline de cinco etapas, programable), la **comunicación**
 
 > **Aviso importante:** no existe código del STRIKER-8 de Rafael en este
 > repositorio. La integración documentada aquí es con un simulador de protocolo,
-> no con el STRIKER real. Ver `docs/cpu_striker.md` y
-> `docs/guia_integracion_striker.md`.
+> no con el STRIKER real. Ver `docs/guia_integracion_striker.md`.
 
 ---
 
@@ -63,7 +62,6 @@ Detalles: `docs/arquitectura_goalkeeper.md` e `inventario_tecnico.md`.
 ├── assembler.h                Ensamblador de programas .asm
 ├── demo_goalkeeper.cpp        Demostración interactiva de penaltis
 ├── eval_goalkeeper.cpp        Evaluador de programas independientes
-├── testbench*.cpp / test_*.cpp  Pruebas (cada una con su sc_main)
 ├── examples/                  13 programas .asm de ejemplo
 ├── CMakeLists.txt
 └── docs/                      Documentación
@@ -138,19 +136,6 @@ Guías completas: `docs/GUIA_EJECUCION_PROGRAMAS.md` y `docs/evaluacion.md`.
 
 ---
 
-## Cómo ejecutar las pruebas
-
-```bash
-cd build
-ctest --output-on-failure
-```
-
-Resultado esperado: `100% tests passed` (21 pruebas). Incluyen módulos,
-pipeline, forwarding, hazards, branches, comunicación, E/S, estrategia, Fase 6,
-ensamblador, núcleo adicional y aceptación.
-
----
-
 ## Cómo se comunican (protocolo REQ/ACK)
 
 Mediante `CommunicationMailbox`:
@@ -188,5 +173,3 @@ Contrato completo para conectar el STRIKER-8 real:
 - `docs/GUIA_EJECUCION_PROGRAMAS.md` — guía del evaluador de programas.
 - `docs/evaluacion.md` — referencia del evaluador.
 - `inventario_tecnico.md` — ficha técnica completa.
-- `docs/*.md` — documentación por módulo (ALU, PC, banco, memorias, UC, CPU,
-  Mailbox, árbitro, ISA, programa, integración, STRIKER).
