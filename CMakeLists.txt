@@ -42,6 +42,10 @@ foreach(tb ${TESTBENCHES})
     target_link_libraries(${tb} PRIVATE ${SC_LIBS})
 endforeach()
 
+# Demostracion interactiva por terminal (no forma parte de CTest).
+add_executable(demo_goalkeeper demo_goalkeeper.cpp)
+target_link_libraries(demo_goalkeeper PRIVATE ${SC_LIBS})
+
 enable_testing()
 
 # Pruebas que devuelven 0 cuando todas sus comprobaciones pasan.
