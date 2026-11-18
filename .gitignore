@@ -1,0 +1,10 @@
+# Directorio de compilacion
+build/
+
+# Ejecutables compilados
+*.o
+*.out
+demo_goalkeeper
+
+# Configuracion especifica de maquina
+.vscode/
