@@ -35,6 +35,9 @@ set(TESTBENCHES
     test_fase6
     test_arbitro
     testbench_integracion
+    test_core_extra
+    test_assembler
+    test_acceptance
 )
 
 foreach(tb ${TESTBENCHES})
@@ -45,6 +48,10 @@ endforeach()
 # Demostracion interactiva por terminal (no forma parte de CTest).
 add_executable(demo_goalkeeper demo_goalkeeper.cpp)
 target_link_libraries(demo_goalkeeper PRIVATE ${SC_LIBS})
+
+# Evaluador de programas .asm (no forma parte de CTest).
+add_executable(eval_goalkeeper eval_goalkeeper.cpp)
+target_link_libraries(eval_goalkeeper PRIVATE ${SC_LIBS})
 
 enable_testing()
 
@@ -67,3 +74,6 @@ add_test(NAME goalkeeper_strategy        COMMAND test_goalkeeper_strategy)
 add_test(NAME fase6                      COMMAND test_fase6)
 add_test(NAME arbitro                    COMMAND test_arbitro)
 add_test(NAME integracion                COMMAND testbench_integracion)
+add_test(NAME core_extra                 COMMAND test_core_extra)
+add_test(NAME assembler                  COMMAND test_assembler)
+add_test(NAME acceptance                 COMMAND test_acceptance)
