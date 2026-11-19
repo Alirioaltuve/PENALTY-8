@@ -58,13 +58,10 @@ make eval_goalkeeper
 
 El ejecutable queda en `build/eval_goalkeeper`.
 
-Para ejecutar todas las pruebas (verificación de regresión):
-
-```bash
-ctest
-```
-
-El resultado esperado es `100% tests passed` (21 pruebas).
+> **Nota:** esta distribución no incluye los archivos de pruebas automatizadas
+> (residen en la rama de desarrollo `portero-prueba`). Por eso no hay pruebas de
+> CTest que ejecutar; el flujo de trabajo de esta versión es compilar y ejecutar
+> los dos programas (`demo_goalkeeper` y `eval_goalkeeper`) directamente.
 
 ---
 
@@ -289,9 +286,6 @@ Los errores de ensamblado y de archivo terminan con código de salida 1.
 ```bash
 # Compilar (desde la raíz del proyecto)
 mkdir -p build && cd build && cmake .. && make
-
-# Ejecutar las pruebas
-ctest
 
 # Ejecutar un programa de ejemplo
 ./eval_goalkeeper ../examples/suma.asm

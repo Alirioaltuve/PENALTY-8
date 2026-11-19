@@ -102,9 +102,8 @@ Al terminar, `eval_goalkeeper` muestra:
 
 Para permitir entradas reales en una futura integración, basta con conectar el
 `CommunicationMailbox` a los puertos `io_*` de la CPU y cargar datos en las
-direcciones de solicitud `0x10..0x14` (como hacen `test_cpu_io.cpp` y
-`test_communication.cpp`). Entonces `IN Rd, 0x11` leería, por ejemplo, el valor
-de `target_x` provisto por un dispositivo.
+direcciones de solicitud `0x10..0x14`. Entonces `IN Rd, 0x11` leería, por
+ejemplo, el valor de `target_x` provisto por un dispositivo.
 
 ## Límite de ciclos (`--max-ciclos`)
 

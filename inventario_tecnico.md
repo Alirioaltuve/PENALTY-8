@@ -1,6 +1,8 @@
-# Inventario técnico definitivo — GOALKEEPER-8
+# Inventario técnico — GOALKEEPER-8 (distribución v2)
 
-HEAD verificado: `8130d1b03cb86d405d730fd4f85b53fb470ef86f`. Informe de solo lectura; no se modificó nada.
+Este inventario describe la distribución publicada en la rama
+`demo-goalkeeper-v2`. El desarrollo completo, incluidos sus archivos de pruebas,
+reside en la rama `portero-prueba`.
 
 ---
 
@@ -24,7 +26,7 @@ HEAD verificado: `8130d1b03cb86d405d730fd4f85b53fb470ef86f`. Informe de solo lec
 | `Arbitro` | `arbitro.h` | Decide MISS/GOAL/SAVE (combinacional) | No (externo) |
 | `StrikerSim` | `striker_sim.h` | Emulador de STRIKER por protocolo (NO es el STRIKER real) | No (auxiliar) |
 
-**Auxiliares (demo/pruebas, no son el núcleo):** `StrikerDemo` (`demo_goalkeeper.cpp`), `MonitorSalida`, `MonitorMem`, `ProtocolDriver`, `MonitorES`, `StrikerLoader`, `MonitorGk`, `EmuladorStriker`, `MonitorRegistros`.
+**Auxiliar de la demo (no es el núcleo):** `StrikerDemo` (`demo_goalkeeper.cpp`), que emula el lado STRIKER a nivel de protocolo.
 
 ### 1.2 Conteo de instancias
 
@@ -92,9 +94,9 @@ Total: 1 + 7 + 3 = **11 instancias de `sc_module`**.
 | Banderas | **C (carry) y Z (zero)**; **no** hay V (overflow) | `alu.h`, `registro_banderas.h` |
 | Formatos de instrucción | **R, I, J** | `isa.h:52-87` |
 | Cantidad de instrucciones | **20 opcodes** (NOP=0 … HALT=19) | `isa.h:19-40` |
-| Reloj | **10 ns (100 MHz)** configurado en testbenches/demo | `sc_clock clk("clk", 10, SC_NS)` |
+| Reloj | **10 ns (100 MHz)** configurado en la demo y el evaluador | `sc_clock clk("clk", 10, SC_NS)` |
 
-**Nota importante:** la frecuencia NO está dentro de la CPU. La CPU solo expone un puerto `clk`; el período de 10 ns lo configura cada `sc_clock` de los testbenches y de la demo. El módulo CPU es agnóstico a la frecuencia.
+**Nota importante:** la frecuencia NO está dentro de la CPU. La CPU solo expone un puerto `clk`; el período de 10 ns lo configura el `sc_clock` de `demo_goalkeeper.cpp` y `eval_goalkeeper.cpp`. El módulo CPU es agnóstico a la frecuencia.
 
 Semántica de banderas (confirmada en `alu.h`):
 - **ADD:** `C` = acarreo del bit 8 de la suma (9 bits); `Z` = (resultado==0).
@@ -291,7 +293,7 @@ Porque la ALU (`alu.h`) solo produce `carry` y `zero`; no hay salida ni registro
 `detectar_hazard` ve `LD` en EX y un consumidor en ID que usa el mismo `rd`; asigna `stall`, congela IF/ID y PC, e inserta una burbuja en ID/EX. Tras el stall, el dato viaja por `WB→ID` o `MEM/WB→EX`. En la estrategia real esto ocurre en `LD R0,0x00` → `OUT R0,0x20`.
 
 **3. ¿Por qué el salto condicional se decide en ID y no en EX?**
-`UnidadControl` produce `ctrl_salto`/`ctrl_dir_salto` a partir de `ifid_instr` (ID) y las banderas reenviadas (`comb_flags`). `control_pc` lo usa directamente. El flush solo invalida IF/ID. (El diseño evita esperar hasta EX, como se verifica en `test_branch.cpp`.)
+`UnidadControl` produce `ctrl_salto`/`ctrl_dir_salto` a partir de `ifid_instr` (ID) y las banderas reenviadas (`comb_flags`). `control_pc` lo usa directamente. El flush solo invalida IF/ID.
 
 **4. ¿Qué hace `MOV R6,R2` internamente y por qué no usa la ALU?**
 `UnidadControl` (`MOV`) pone `write_back_sel = WB_RA` y `reg_a_sel = ra`; en WB el dato es `ex_a` (la copia del registro fuente), sin pasar por ALU y **sin modificar banderas**.
@@ -300,7 +302,7 @@ Porque la ALU (`alu.h`) solo produce `carry` y `zero`; no hay salida ni registro
 Lo produce el Mailbox (`r_ticks`), incrementado en cada `clk.pos()` mientras hay solicitud, detenido con ACK, saturado en 255. El `OUT R7,0x23` de la CPU es un marcador que el Mailbox **ignora** (rama `a==0x23` vacía).
 
 **6. ¿Puede la CPU emitir una respuesta duplicada?**
-No. El programa escribe una vez y luego espera `REQ=0`. Además el Mailbox solo acepta la respuesta si `r_req && !r_ack` y el ACK una sola vez. El monitor de `test_fase6` confirma exactamente 7 OUT por solicitud (70 en 10 solicitudes).
+No. El programa escribe una vez y luego espera `REQ=0`. Además el Mailbox solo acepta la respuesta si `r_req && !r_ack` y el ACK una sola vez. Por solicitud, la CPU emite exactamente 7 escrituras OUT (5 campos + marcador + ACK).
 
 **7. ¿Qué pasa con `power` y `flight_ticks`? ¿Son dependientes?**
 Son campos independientes del protocolo; no se valida `flight = 256 - power`. La estrategia usa `power` (umbral 128) para `reach` y `flight_ticks` (umbral 128) para `dive_y` y `reach`; el Árbitro usa `flight_ticks` como límite de tiempo.
@@ -316,4 +318,4 @@ El portero nunca debe detenerse: tras responder espera `REQ=0` y vuelve a `INICI
 
 ---
 
-**Fin del inventario.** No se realizaron modificaciones ni commits; el repositorio permanece en `8130d1b03cb86d405d730fd4f85b53fb470ef86f`.
+**Fin del inventario.**

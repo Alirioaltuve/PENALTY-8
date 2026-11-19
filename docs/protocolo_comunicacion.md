@@ -75,9 +75,11 @@ Implementado por `CommunicationMailbox`.
 ## 11. Instrucciones usadas
 `IN`/`OUT` en el portero; lectura/escritura de bus en el striker.
 
-## 12. Pruebas realizadas
-`testbench_integracion.cpp`: 4 intercambios consecutivos, REQ/ACK correctos,
-identificador preservado y reacción medida.
+## 12. Validación
+El protocolo fue validado en la rama de desarrollo (`portero-prueba`) mediante
+varios intercambios consecutivos: REQ/ACK correctos, identificador preservado y
+tiempo de reacción medido. Los archivos de pruebas de esa rama no se incluyen
+en esta distribución.
 
 ## 13. Ejemplo
 ```
