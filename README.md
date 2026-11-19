@@ -28,7 +28,8 @@ striker/
 ├── striker.h            ISA, ALU, control, registros, memorias, buzón y Striker8
 ├── striker.cpp          Implementación del hardware y del secuenciador
 ├── programa_striker.h   Programa máquina de 99 palabras de 16 bits y constantes
-├── pruebas_striker.cpp  Banco de pruebas (561 comprobaciones)
+├── pruebas_striker.cpp  Banco de pruebas (561 comprobaciones) y ensamblador .asm
+├── programa.asm         Programa de ejemplo para `make asm`
 ├── Makefile             Compilación y ejecución (WSL/Linux y Windows)
 └── README.md            Este documento
 ```
@@ -430,6 +431,8 @@ Requisitos: `g++` con C++17, SystemC 3.0.2 y `pkg-config`.
 cd ruta/del/proyecto/striker
 make          # compila las pruebas
 make run      # compila y ejecuta
+make asm      # ensambla y ejecuta programa.asm
+make asm ASM=mi_programa.asm   # ensambla y ejecuta otro archivo
 make clean    # borra el ejecutable
 ```
 
@@ -477,35 +480,58 @@ programa devuelve `0` si todas pasan y `1` si hay algún fallo.
 15. Pipeline: solapamiento de instrucciones (21 instrucciones + `HALT` en
     25 ciclos, frente a 63 del modelo multiciclo).
 
-### Ayudante para la evaluación en vivo
+### Programas externos `.asm`
 
-`BancoPruebas::probar_programa_profesor(const uint16_t* prog, size_t n, int maximo = 6000)`
-carga cualquier programa de 16 bits, lo ejecuta hasta `HALT` e imprime un
-resumen con **ciclos ejecutados, PC final, IR final, banderas Z y C y los ocho
-registros `R0`–`R7`**.
+El ejecutable es universal: puede ensamblar y ejecutar cualquier programa de
+hasta 256 palabras sin recompilar. Desde `make`:
 
-```cpp
-const uint16_t mi_programa[] = {
-    isa8::codificar_i(isa8::OP_LDI, 0, 5),
-    isa8::codificar_i(isa8::OP_LDI, 1, 7),
-    isa8::codificar_r(isa8::OP_ADD, 2, 0, 1),
-    isa8::codificar_r(isa8::OP_SUB, 3, 2, 1),
-    isa8::codificar_j(isa8::OP_HALT, 0)
-};
-banco_pruebas.probar_programa_profesor(mi_programa, 5);
+```bash
+make asm                       # usa programa.asm
+make asm ASM=mi_programa.asm   # usa otro archivo
 ```
 
-Al final de `make run` se ejecuta un programa de ejemplo con este ayudante:
+O directamente, con opciones:
+
+```bash
+./pruebas_striker mi_programa.asm --max-ciclos 5000 --mem 64
+```
+
+| Opción | Significado |
+|---|---|
+| `--max-ciclos N` | Corta la ejecución tras `N` ciclos (por defecto 100000) |
+| `--mem N` | Vuelca las posiciones no nulas entre las primeras `N` de memoria de datos (por defecto 32) |
+
+Formato del archivo: una instrucción por línea, comentarios con `;` o `#`,
+números en decimal o hexadecimal (`0x2A`) y registros `R0`–`R7`. Los saltos usan
+**dirección numérica de palabra** (no hay etiquetas):
 
 ```
-  Palabras cargadas : 5
-  Ciclos ejecutados : 9
-  PC final          : 5 (0x05)
-  IR final          : 0x9800
-  Banderas          : Z = 0   C = 1
-  Registros         :  R0=  5  R1=  7  R2= 12  R3=  5  R4=  0  R5=  0  R6=  0  R7=  0
-  Estado            : DETENIDO en HALT
+; Resta 10 - 4
+LDI R0, 10
+LDI R1, 4
+SUB R2, R0, R1
+HALT
 ```
+
+Salida correspondiente:
+
+```
+Programa: programa.asm
+Instrucciones: 4
+Palabras de 16 bits:
+  [  0] 0x380A
+  [  1] 0x3904
+  [  2] 0x1A04
+  [  3] 0x9800
+
+Ciclos ejecutados: 8
+Estado final: HALT
+PC final: 4  IR final: 0x9800
+Banderas: Z = 0  C = 1
+```
+
+> En este modo las entradas `IN` valen 0 y el portero simulado está
+> desactivado: un programa que espere ACK terminará por timeout.
 
 ### Resultados esperados de los lanzamientos
 
@@ -551,7 +577,8 @@ RESULTADO: TODAS LAS PRUEBAS PASARON
   entrega el núcleo del computador. No se ha modificado ningún archivo de la
   interfaz gráfica.
 - **Carga de programa en caliente**: el programa se carga antes del reset o del
-  lanzamiento. No se define un protocolo de recarga durante la ejecución.
+  lanzamiento. No se define un protocolo de recarga durante la ejecución; para
+  probar otro programa se vuelve a lanzar el ejecutable con otro `.asm`.
 
 ---
 

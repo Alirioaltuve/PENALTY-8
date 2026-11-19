@@ -1,13 +1,17 @@
-// Pruebas existentes intactas + nueva prueba de solapamiento
+// Pruebas existentes intactas + soporte para ejecutar programas .asm
 
 #include <systemc.h>
 #include <iostream>
 #include <iomanip>
+#include <fstream>
+#include <sstream>
 #include <string>
+#include <vector>
+#include <cctype>
+#include <cstdlib>
 
 #include "striker.h"
 #include "programa_striker.h"
-
 
 //  Contadores globales de la bateria de pruebas
 static int total_comprobaciones = 0;
@@ -45,8 +49,176 @@ static void verificar_texto(const std::string& nombre,
     }
 }
 
-//  RespondedorPortero - GOALKEEPER-8 simulado para las pruebas
+//  Ensamblador sencillo de .asm hacia palabras de 16 bits de STRIKER-8
+namespace asm_striker {
 
+struct ResultadoEnsamblado {
+    bool ok;
+    std::string error;
+    std::vector<uint16_t> palabras;
+};
+
+static std::string recortar(const std::string& s) {
+    size_t ini = 0;
+    while (ini < s.size() && std::isspace(static_cast<unsigned char>(s[ini]))) {
+        ++ini;
+    }
+    size_t fin = s.size();
+    while (fin > ini && std::isspace(static_cast<unsigned char>(s[fin - 1]))) {
+        --fin;
+    }
+    return s.substr(ini, fin - ini);
+}
+
+static std::string a_mayusculas(std::string s) {
+    for (size_t i = 0; i < s.size(); ++i) {
+        s[i] = static_cast<char>(std::toupper(static_cast<unsigned char>(s[i])));
+    }
+    return s;
+}
+
+static bool parsear_registro(const std::string& tok, unsigned& reg) {
+    std::string t = a_mayusculas(recortar(tok));
+    if (t.size() == 2 && t[0] == 'R' && t[1] >= '0' && t[1] <= '7') {
+        reg = static_cast<unsigned>(t[1] - '0');
+        return true;
+    }
+    return false;
+}
+
+static bool parsear_numero(const std::string& tok, unsigned& val) {
+    std::string t = recortar(tok);
+    if (t.empty()) return false;
+    char* fin = nullptr;
+    errno = 0;
+    unsigned long n = std::strtoul(t.c_str(), &fin, 0);
+    if (errno != 0 || fin == t.c_str() || *fin != '\0') return false;
+    val = static_cast<unsigned>(n);
+    return true;
+}
+
+static std::vector<std::string> separar_operandos(const std::string& resto) {
+    std::vector<std::string> ops;
+    std::stringstream ss(resto);
+    std::string item;
+    while (std::getline(ss, item, ',')) {
+        std::string limpio = recortar(item);
+        if (!limpio.empty()) ops.push_back(limpio);
+    }
+    return ops;
+}
+
+static ResultadoEnsamblado ensamblar_archivo(const std::string& ruta) {
+    ResultadoEnsamblado res;
+    res.ok = false;
+
+    std::ifstream archivo(ruta.c_str());
+    if (!archivo) {
+        res.error = "No se pudo abrir el archivo: " + ruta;
+        return res;
+    }
+
+    std::string linea;
+    unsigned num_linea = 0;
+
+    while (std::getline(archivo, linea)) {
+        ++num_linea;
+
+        size_t pos_pycom = linea.find(';');
+        if (pos_pycom != std::string::npos) linea = linea.substr(0, pos_pycom);
+        size_t pos_alm = linea.find('#');
+        if (pos_alm != std::string::npos) linea = linea.substr(0, pos_alm);
+
+        std::string limpia = recortar(linea);
+        if (limpia.empty()) continue;
+
+        std::istringstream iss(limpia);
+        std::string mnem;
+        iss >> mnem;
+        mnem = a_mayusculas(mnem);
+
+        std::string resto;
+        std::getline(iss, resto);
+        std::vector<std::string> ops = separar_operandos(resto);
+
+        unsigned a = 0, b = 0, c = 0;
+        uint16_t palabra = 0;
+
+        if (mnem == "NOP") {
+            if (!ops.empty()) {
+                res.error = "Linea " + std::to_string(num_linea) + ": NOP no acepta operandos";
+                return res;
+            }
+            palabra = isa8::codificar_j(isa8::OP_NOP, 0);
+        } else if (mnem == "HALT") {
+            if (!ops.empty()) {
+                res.error = "Linea " + std::to_string(num_linea) + ": HALT no acepta operandos";
+                return res;
+            }
+            palabra = isa8::codificar_j(isa8::OP_HALT, 0);
+        } else if (mnem == "MOV") {
+            if (ops.size() != 2 || !parsear_registro(ops[0], a) || !parsear_registro(ops[1], b)) {
+                res.error = "Linea " + std::to_string(num_linea) + ": sintaxis esperada MOV Rd, Rs1";
+                return res;
+            }
+            palabra = isa8::codificar_r(isa8::OP_MOV, a, b, 0);
+        } else if (mnem == "ADD" || mnem == "SUB" || mnem == "AND" || mnem == "OR" || mnem == "CMP") {
+            if (ops.size() != 3 || !parsear_registro(ops[0], a) ||
+                !parsear_registro(ops[1], b) || !parsear_registro(ops[2], c)) {
+                res.error = "Linea " + std::to_string(num_linea) + ": sintaxis esperada " + mnem + " Rd, Rs1, Rs2";
+                return res;
+            }
+            unsigned op_code = isa8::OP_ADD;
+            if (mnem == "SUB") op_code = isa8::OP_SUB;
+            else if (mnem == "AND") op_code = isa8::OP_AND;
+            else if (mnem == "OR") op_code = isa8::OP_OR;
+            else if (mnem == "CMP") op_code = isa8::OP_CMP;
+            palabra = isa8::codificar_r(op_code, a, b, c);
+        } else if (mnem == "LDI" || mnem == "LD" || mnem == "ST" || mnem == "IN" || mnem == "OUT") {
+            if (ops.size() != 2 || !parsear_registro(ops[0], a) || !parsear_numero(ops[1], b)) {
+                res.error = "Linea " + std::to_string(num_linea) + ": sintaxis esperada " + mnem + " R, imm8/dir8/puerto8";
+                return res;
+            }
+            unsigned op_code = isa8::OP_LDI;
+            if (mnem == "LD") op_code = isa8::OP_LD;
+            else if (mnem == "ST") op_code = isa8::OP_ST;
+            else if (mnem == "IN") op_code = isa8::OP_IN;
+            else if (mnem == "OUT") op_code = isa8::OP_OUT;
+            palabra = isa8::codificar_i(op_code, a, b);
+        } else if (mnem == "JMP" || mnem == "JEQ" || mnem == "JNE" ||
+                   mnem == "JGE" || mnem == "JLT" || mnem == "JGT" || mnem == "JLE") {
+            if (ops.size() != 1 || !parsear_numero(ops[0], a)) {
+                res.error = "Linea " + std::to_string(num_linea) + ": sintaxis esperada " + mnem + " dir8";
+                return res;
+            }
+            unsigned op_code = isa8::OP_JMP;
+            if (mnem == "JEQ") op_code = isa8::OP_JEQ;
+            else if (mnem == "JNE") op_code = isa8::OP_JNE;
+            else if (mnem == "JGE") op_code = isa8::OP_JGE;
+            else if (mnem == "JLT") op_code = isa8::OP_JLT;
+            else if (mnem == "JGT") op_code = isa8::OP_JGT;
+            else if (mnem == "JLE") op_code = isa8::OP_JLE;
+            palabra = isa8::codificar_j(op_code, a);
+        } else {
+            res.error = "Linea " + std::to_string(num_linea) + ": instruccion desconocida '" + mnem + "'";
+            return res;
+        }
+
+        res.palabras.push_back(palabra);
+    }
+
+    res.ok = true;
+    return res;
+}
+
+static std::string nombre_base(const std::string& ruta) {
+    size_t p = ruta.find_last_of("/\\");
+    return (p == std::string::npos) ? ruta : ruta.substr(p + 1);
+}
+
+} // namespace asm_striker
+
+//  RespondedorPortero - GOALKEEPER-8 simulado para las pruebas
 //  Detecta el pulso req_valid y entrega 6 bytes con el indice 0..5.
 //  Permite configurar los bytes, el retardo hasta el primer byte y si el
 //  portero esta habilitado (para la prueba de timeout autonomo).
@@ -145,10 +317,7 @@ SC_MODULE(RespondedorPortero) {
     }
 };
 
-
-
 //  Banco de pruebas
-
 SC_MODULE(BancoPruebas) {
 
     // ---- Reloj ----
@@ -407,68 +576,61 @@ SC_MODULE(BancoPruebas) {
         }
     }
 
-    // ---- Evaluacion en vivo con programas personalizados ----
-    // Carga cualquier programa de 16 bits, lo ejecuta hasta HALT e imprime
-    // un resumen: ciclos, PC, IR, banderas Z/C y los 8 registros.
-    void probar_programa_profesor(const uint16_t* prog, size_t n,
-                                  int maximo = 6000) {
-        std::cout << "\n------------------------------------------------------"
-                  << std::endl;
-        std::cout << "  EVALUACION EN VIVO: PROGRAMA PERSONALIZADO"
-                  << std::endl;
-        std::cout << "------------------------------------------------------"
-                  << std::endl;
-
-        if (prog == nullptr || n == 0) {
-            std::cout << "  [ERROR] programa vacio (puntero nulo o longitud 0)."
-                      << std::endl;
+    void ejecutar_asm(const std::string& ruta,
+                      unsigned int max_ciclos = 100000,
+                      unsigned int mem_volcado = 32) {
+        asm_striker::ResultadoEnsamblado ens = asm_striker::ensamblar_archivo(ruta);
+        if (!ens.ok) {
+            std::cerr << "Error de ensamblado: " << ens.error << "\n";
+            ++total_comprobaciones;
+            ++total_fallos;
             return;
         }
 
-        const bool completo = dut->memoria_programa->cargar(prog, n);
-        if (!completo) {
-            std::cout << "  [AVISO] el programa supera 256 palabras: solo se "
-                         "cargaron las primeras 256." << std::endl;
+        std::cout << "Programa: " << asm_striker::nombre_base(ruta) << "\n";
+        std::cout << "Instrucciones: " << ens.palabras.size() << "\n";
+        std::cout << "Palabras de 16 bits:\n";
+        for (size_t i = 0; i < ens.palabras.size(); ++i) {
+            std::cout << "  [" << std::setw(3) << i << "] 0x"
+                      << std::hex << std::uppercase << std::setw(4)
+                      << std::setfill('0') << ens.palabras[i]
+                      << std::dec << std::setfill(' ') << "\n";
         }
 
-        // Reset, entradas a cero y pulso de lanzamiento.
+        portero->habilitar(false);
+        dut->memoria_programa->cargar(ens.palabras.data(), ens.palabras.size());
         preparar_lanzamiento(0, 0, 0, 0);
         lanzar.write(true);
         avanzar(1);
         lanzar.write(false);
 
-        const bool llego = ejecutar_hasta_halt(maximo);
-        const unsigned pc_final = dut->valor_pc();
-        const unsigned ir_final = dut->valor_ir();
+        const bool fin_halt = ejecutar_hasta_halt(static_cast<int>(max_ciclos));
 
-        std::cout << std::right;
-        std::cout << "  Palabras cargadas : " << n << std::endl;
-        std::cout << "  Ciclos ejecutados : " << dut->ciclos_ejecutados()
-                  << std::endl;
-        std::cout << "  PC final          : " << pc_final << " (0x"
-                  << std::hex << std::uppercase << std::setfill('0')
-                  << std::setw(2) << pc_final << std::dec
-                  << std::setfill(' ') << ")" << std::endl;
-        std::cout << "  IR final          : 0x" << std::hex << std::uppercase
-                  << std::setfill('0') << std::setw(4) << ir_final << std::dec
-                  << std::setfill(' ') << std::endl;
-        std::cout << "  Banderas          : Z = " << (dbg_z.read() ? 1 : 0)
-                  << "   C = " << (dbg_c.read() ? 1 : 0) << std::endl;
-        std::cout << "  Registros         :";
-        for (unsigned i = 0; i < 8; ++i) {
-            std::cout << "  R" << i << "=" << std::setfill(' ')
-                      << std::setw(3) << dut->valor_registro(i);
-        }
-        std::cout << std::endl;
+        std::cout << "\nCiclos ejecutados: " << dut->ciclos_ejecutados() << "\n";
+        std::cout << "Estado final: " << (fin_halt ? "HALT" : "LIMITE DE CICLOS") << "\n";
+        std::cout << "PC final: " << dut->valor_pc() << "  IR final: 0x"
+                  << std::hex << std::uppercase << std::setw(4)
+                  << std::setfill('0') << dut->valor_ir()
+                  << std::dec << std::setfill(' ') << "\n";
+        std::cout << "Banderas: Z = " << (dbg_z.read() ? 1 : 0)
+                  << "  C = " << (dbg_c.read() ? 1 : 0) << "\n";
 
-        if (llego) {
-            std::cout << "  Estado            : DETENIDO en HALT" << std::endl;
-        } else {
-            std::cout << "  Estado            : NO alcanzo HALT en " << maximo
-                      << " ciclos" << std::endl;
+        std::cout << "\nRegistros:\n";
+        for (int i = 0; i < 8; ++i) {
+            std::cout << "  R" << i << " = " << std::dec
+                      << dut->valor_registro(static_cast<unsigned>(i)) << "\n";
         }
 
-        // Deja el entregable listo para el siguiente programa.
+        std::cout << "\nMemoria de datos (primeras " << mem_volcado << " posiciones):\n";
+        for (unsigned int i = 0; i < mem_volcado && i < 256; ++i) {
+            unsigned int v = dut->valor_dato(i);
+            if (v != 0) {
+                std::cout << "  [" << std::hex << std::setw(2) << std::setfill('0')
+                          << i << "] = " << std::dec << v << "\n";
+            }
+        }
+        std::cout << "  (el resto es 0)\n";
+
         dut->cargar_programa_predeterminado();
         portero->habilitar(true);
     }
@@ -1407,21 +1569,7 @@ SC_MODULE(BancoPruebas) {
         probar_banderas_cpu();
         probar_modo_fuera_de_rango();
         probar_instruccion_reservada();
-        probar_pipeline(); // se ejecuta al final
-
-        // Demostracion del ayudante de evaluacion en vivo.  No forma parte
-        // de la bateria de comprobaciones: solo muestra el resumen que vera
-        // el profesor al cargar un programa personalizado.
-        {
-            const uint16_t prog_demo[] = {
-                isa8::codificar_i(isa8::OP_LDI, 0, 5),    // R0 = 5
-                isa8::codificar_i(isa8::OP_LDI, 1, 7),    // R1 = 7
-                isa8::codificar_r(isa8::OP_ADD, 2, 0, 1), // R2 = 12
-                isa8::codificar_r(isa8::OP_SUB, 3, 2, 1), // R3 = 5, C = 1
-                isa8::codificar_j(isa8::OP_HALT, 0)
-            };
-            probar_programa_profesor(prog_demo, 5);
-        }
+        probar_pipeline();
 
         std::cout << "\n======================================================"
                   << std::endl;
@@ -1438,11 +1586,30 @@ SC_MODULE(BancoPruebas) {
     int fallos_totales() const { return total_fallos; }
 };
 
-
-
 //  Programa principal
-int sc_main(int /*argc*/, char* /*argv*/[]) {
+int sc_main(int argc, char* argv[]) {
     BancoPruebas banco_pruebas("BANCO_PRUEBAS");
+
+    std::string archivo_asm;
+    unsigned int max_ciclos = 100000;
+    unsigned int mem_volcado = 32;
+
+    for (int i = 1; i < argc; ++i) {
+        std::string a = argv[i];
+        if (a == "--max-ciclos" && i + 1 < argc) {
+            max_ciclos = static_cast<unsigned int>(std::atoi(argv[++i]));
+        } else if (a == "--mem" && i + 1 < argc) {
+            mem_volcado = static_cast<unsigned int>(std::atoi(argv[++i]));
+        } else if (archivo_asm.empty()) {
+            archivo_asm = a;
+        }
+    }
+
+    if (!archivo_asm.empty()) {
+        banco_pruebas.ejecutar_asm(archivo_asm, max_ciclos, mem_volcado);
+        return (total_fallos == 0) ? 0 : 1;
+    }
+
     banco_pruebas.ejecutar_todo();
     return banco_pruebas.fallos_totales() == 0 ? 0 : 1;
 }

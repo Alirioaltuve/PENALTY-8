@@ -20,6 +20,7 @@ PKG_CONFIG ?= pkg-config
 PRUEBAS   := pruebas_striker
 FUENTES   := striker.cpp pruebas_striker.cpp
 CABECERAS := striker.h programa_striker.h
+ASM       ?= programa.asm
 
 ifeq ($(OS),Windows_NT)
   # ------------------------- Windows -------------------------
@@ -56,6 +57,9 @@ $(PRUEBAS)$(EXE): $(FUENTES) $(CABECERAS)
 run: $(PRUEBAS)$(EXE)
 	./$(PRUEBAS)$(EXE)
 
+asm: $(PRUEBAS)$(EXE)
+	./$(PRUEBAS)$(EXE) $(ASM)
+
 clean:
 ifeq ($(OS),Windows_NT)
 	-@if exist $(PRUEBAS).exe del /Q $(PRUEBAS).exe
@@ -64,4 +68,4 @@ else
 	-$(RM) $(PRUEBAS)
 endif
 
-.PHONY: all run clean
+.PHONY: all run asm clean
